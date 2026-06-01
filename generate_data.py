@@ -158,7 +158,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train-per-class", type=int, default=2000)
     parser.add_argument("--test-per-class", type=int, default=2000)
     parser.add_argument("--hidden-per-class", type=int, default=2000)
-    parser.add_argument("--seed", type=int, default=20260525)
+    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--plot", action="store_true", help="save data/preview.png")
     return parser.parse_args()
 
