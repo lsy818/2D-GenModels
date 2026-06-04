@@ -54,7 +54,11 @@ class KDEModel(GenerativeModel):
         self.kde.fit(data)
         return self
 
-    # ── sample ────────────────────────────────────────────────────────────
+    # ── helpers ───────────────────────────────────────────────────────────
+
+    def score_samples(self, points: np.ndarray) -> np.ndarray:
+        """Log-density of each point under the fitted KDE."""
+        return self.kde.score_samples(points)
 
     def sample(self, n: int) -> np.ndarray:
         return self._mcmc_sample(n).astype(np.float32)

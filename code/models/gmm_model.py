@@ -68,7 +68,9 @@ class GMMModel(GenerativeModel):
         samples, _ = self.gmm.sample(n)
         return samples.astype(np.float32)
 
-    # ── helpers ───────────────────────────────────────────────────────────
+    def score_samples(self, points: np.ndarray) -> np.ndarray:
+        """Log-density of each point under the fitted GMM."""
+        return self.gmm.score_samples(points)
 
     @property
     def bic_values(self) -> np.ndarray:
