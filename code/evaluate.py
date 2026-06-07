@@ -13,7 +13,7 @@ from code.metrics import compute_all_metrics
 from code.models import KDEModel, GMMModel, VAEModel, DiffusionModel
 from code.visualize import (
     plot_metrics_heatmap, plot_metrics_bars, plot_metrics_radar,
-    plot_mode_coverage_detail, print_metrics_table,
+    print_metrics_table,
 )
 
 
@@ -89,7 +89,6 @@ def run_evaluation(cfg: ExperimentConfig = None) -> None:
     plot_metrics_heatmap(metrics_table)
     plot_metrics_bars(metrics_table)
     plot_metrics_radar(metrics_table)
-    plot_mode_coverage_detail(metrics_table)
     print_metrics_table(metrics_table)
 
     print("\nEvaluation complete.")

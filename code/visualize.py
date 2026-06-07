@@ -907,43 +907,6 @@ def plot_metrics_radar(metrics_table: dict, out_path: Path = None) -> None:
     print(f"  Saved: {out_path.name}")
 
 
-def plot_mode_coverage_detail(metrics_table: dict, out_path: Path = None) -> None:
-    """Bar chart showing mode coverage specifically."""
-    if out_path is None:
-        out_path = ensure_dir(EVAL_DIR) / "mode_coverage.png"
-
-    model_names = ["KDE", "GMM", "VAE", "Diffusion"]
-    class_names = list(metrics_table.keys())
-    n_models = len(model_names)
-
-    fig, ax = plt.subplots(figsize=(10, 5))
-    x = np.arange(len(class_names))
-    bar_width = 0.18
-
-    for i, mn in enumerate(model_names):
-        vals = [metrics_table[cn][mn]["ModeCoverage"] for cn in class_names]
-        offset = (i - n_models / 2 + 0.5) * bar_width
-        ax.bar(x + offset, vals, bar_width, label=mn,
-               color=CLASS_COLORS[i % 4], alpha=0.85, edgecolor="white", linewidth=0.5)
-        # Annotate
-        for j, v in enumerate(vals):
-            ax.text(x[j] + offset, v + 0.02, f"{v:.2f}", ha="center",
-                    fontsize=7, fontweight="bold")
-
-    ax.set_xticks(x)
-    ax.set_xticklabels(class_names, fontsize=11)
-    ax.set_ylabel("Mode Coverage", fontsize=12)
-    ax.set_ylim(0, 1.25)
-    ax.set_title("Mode Coverage by Class and Model", fontsize=14, fontweight="bold")
-    ax.legend(fontsize=10, loc="upper right", framealpha=0.9,
-              bbox_to_anchor=(1.0, 1.0))
-    ax.grid(axis="y", alpha=0.2)
-    fig.tight_layout(pad=1.5)
-    fig.savefig(out_path, dpi=150)
-    plt.close(fig)
-    print(f"  Saved: {out_path.name}")
-
-
 def print_metrics_table(metrics_table: dict) -> None:
     """Pretty-print a summary table to stdout."""
     model_names = ["KDE", "GMM", "VAE", "Diffusion"]
