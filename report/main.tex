@@ -1,0 +1,497 @@
+% !TeX program = xelatex
+\documentclass{article}
+\usepackage[UTF8]{ctex}
+\usepackage[tc]{titlepic}
+\usepackage{titlesec}
+\usepackage{cite}
+\usepackage{fancyhdr}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{geometry}
+\usepackage[section]{placeins}
+\usepackage{amsmath, amssymb}
+\usepackage{subcaption}
+\usepackage{float}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{multirow}
+\geometry{a4paper,scale=0.8}
+\pagestyle{fancy}
+
+\lhead{数学建模课程论文\\\today}
+\chead{中国科学技术大学\\数学建模课程}
+
+\rhead{Final Project\\ {\CTEXoptions[today=old]\today}}
+\newcommand{\upcite}[1]{\textsuperscript{\cite{#1}}}
+
+\titleformat*{\section}{\bfseries\Large}
+\titleformat*{\subsection}{\bfseries\large}
+
+% ===================== 数学符号 =====================
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\Ncal}{\mathcal{N}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\KL}{D_{\mathrm{KL}}}
+\newcommand{\norm}[1]{\left\| #1 \right\|}
+
+% ===================== 图片路径 =====================
+\graphicspath{{../figures/analysis/}{../figures/generation/}{../figures/evaluation/}{../figures/}}
+
+\title{\bfseries 二维分布生成建模：VAE 与扩散模型的实验比较}
+\author{刘世阳 \quad  PB23050876}
+
+\begin{document}
+\maketitle
+\begin{abstract}
+生成建模旨在从观测数据中学习概率分布并从中生成统计一致的新样本。本文在统一实验框架下系统比较了变分自编码器（VAE）与去噪扩散概率模型（DDPM）在四类二维合成分布（Gaussian Mixture、Ring、Two Moons、Spiral）上的生成性能。四类分布构成一条从离散多峰到长程拓扑的难度梯度，分别考察模型在模式覆盖、薄结构保持、局部几何分辨和全局一致性四个维度上的能力。在数据分析阶段，通过局部近邻统计、主成分分析、跨尺度有效维度估计和极坐标拓扑简化等方法揭示了各类分布的核心建模难点。在模型建立阶段，对 VAE 的重参数化技巧和 DDPM 的双向马尔可夫链机制进行了深入的数学推导。在质量评价阶段，采用最大均值差异、Wasserstein 距离、Precision、Coverage 和负对数似然五种指标进行多维度交叉评估。实验结果表明：DDPM 凭借分步去噪的多尺度机制在绝大多数指标上占优，尤其在连续流形分布上 Coverage 显著领先；VAE 存在系统性的 Precision-Coverage 分化——KL 正则确保了模式全覆盖但单步解码导致局部精度下降。此外，本文还通过超参数消融、条件生成和数据污染三项拓展实验进一步检验了结论的稳健性。
+
+\vspace{1em}
+\noindent\textbf{关键词：}生成模型；变分自编码器；扩散模型；二维分布；生成质量评价
+\end{abstract}
+\clearpage
+
+% ===================== 一、前言 =====================
+\setcounter{section}{1}
+\section*{\centerline{一、前言（问题的提出）}}
+
+\subsection{研究背景}
+
+生成模型是机器学习中的核心范式之一，其目标是从有限的观测样本中学习数据背后的概率分布 $p_{\mathrm{data}}(\mathbf{x})$，并能够从中生成新的、与训练样本统计一致的样本\upcite{kingma2014vae}。与分类和回归等判别式任务不同，生成建模更关注整体数据分布的刻画能力——具体而言，生成样本是否多样（多样性）、是否覆盖了真实分布的所有区域（覆盖性）以及个体样本是否可信（真实性）。
+
+本课题要求对四类二维复杂分布——Gaussian Mixture（高斯混合分布）、Ring（环形分布）、Two Moons（月牙形分布）和 Spiral（螺旋分布）——进行数据分析、建立生成模型、生成新样本并评价生成质量。四类分布各包含 2000 个训练样本和 2000 个测试样本，数据坐标大致在 $[-4,4]\times[-4,4]$ 范围内。本文选取变分自编码器（VAE）和去噪扩散概率模型（DDPM）两类代表性深度生成模型，旨在通过统一框架下的系统比较，回答以下核心问题：\textbf{两类模型在处理不同几何拓扑结构的数据分布时，各自的优势和失效模式是什么？这些差异能否从其底层的数学机制中得到系统的解释？}
+
+\subsection{研究意义}
+
+虽然数据维度仅为二维，但四类分布覆盖了生成建模中几乎所有的核心挑战：离散多峰与连续流形的区分、非凸支撑集与拓扑保持、多尺度密度变化与局部几何分辨率。二维场景的核心优势在于所有结果可以直接可视化，使得模型行为的诊断变得直观而具体。通过在这四类分布上的系统比较，本文旨在揭示基于 KL 散度的方法（VAE）和基于分数匹配的方法（DDPM）在低维流形生成中的适用边界。
+
+% ===================== 二、相关工作 =====================
+\setcounter{section}{2}
+\section*{\centerline{二、相关工作}}
+
+变分自编码器（VAE）由 Kingma 和 Welling\upcite{kingma2014vae} 于 2014 年提出，是深度潜变量建模的奠基性工作。其核心思想是通过引入参数化的近似后验分布并最大化证据下界（ELBO），同时训练编码器和解码器。VAE 的重参数化技巧使得随机采样操作可微，从而实现了端到端的训练。然而，高斯潜空间先验与复杂拓扑（如闭合流形）之间的不匹配、以及 ELBO 目标函数中重构项与 KL 正则项的内在竞争，是 VAE 在低维流形生成中表现受限的已知局限。
+
+去噪扩散概率模型（DDPM）由 Ho 等人\upcite{ho2020ddpm} 于 2020 年提出，近年来在图像生成等领域取得了最先进的效果。其核心思想是将复杂的数据分布生成问题拆解为一系列简单的去噪子任务——通过一条前向加噪的马尔可夫链将数据逐步退化为高斯噪声，再通过一条参数化的反向去噪链从噪声中逐步恢复数据结构。这种"分而治之"的策略使 DDPM 在处理复杂几何结构时表现出强鲁棒性，但其采样需要完整的千步迭代，速度慢于单步方法。
+
+在生成质量评价方面，最大均值差异（MMD）\upcite{gretton2012mmd} 通过核技巧在再生核希尔伯特空间中比较分布差异；Wasserstein 距离基于最优传输理论\upcite{rabin2011swd} 提供了具有直观几何意义的分布距离度量；Precision 和 Coverage\upcite{kyukaaniemi2019prdc} 从样本级别分别衡量生成真实性和分布覆盖性。多指标交叉评估已成为该领域的标准做法。
+
+% ===================== 三、问题分析 =====================
+\setcounter{section}{3}
+\section*{\centerline{三、问题分析}}
+
+在建立生成模型之前，必须对数据分布的本质特征进行深入剖析。本节采用"从宏观到微观、从现象到本质"的分析框架，层层递进地揭示四类分布的几何结构、噪声特征和多峰特性，为后续模型选型提供数据驱动的决策依据。
+
+\subsection{宏观分布概览}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.82\textwidth]{comparison_overview.pdf}
+    \caption{四类二维分布的散点图（上排）与 KDE 密度热力图（下排）}
+    \label{fig:overview}
+\end{figure}
+
+如图~\ref{fig:overview} 所示，四类二维分布呈现出截然不同的几何形态。Gaussian Mixture 代表了典型的离散多峰分布——概率密度集中在八个互不相连的团簇中，各团簇由低密度区域明确分隔。Ring、Two Moons 和 Spiral 则构成了非线性程度依次递增的低维连续流形——数据本质上依附于一维曲线，但以非线性的方式嵌入在二维观测空间中。从 Gaussian Mixture 到 Spiral，四类分布构成了一条从"离散团簇"到"长程缠绕曲线"的难度梯度。
+
+\subsection{数据集同分布假设检验}
+
+在深入分析结构之前，本研究首先验证了训练集与测试集来自同一分布。通过 KDE 密度估计计算各类别的 Jensen-Shannon 散度，全部在 $10^{-3}$ 量级（Gaussian Mixture 0.0021, Ring 0.0025, Two Moons 0.0032, Spiral 0.0079），严格满足独立同分布假设，确保了后续基于测试集的生成质量评价具有统计学基础。
+
+\subsection{各分布建模难点分析}
+
+\textbf{Gaussian Mixture} 由八个各向同性高斯团簇构成（中心均匀分布在半径 2.6 的圆上，团簇内部标准差约 0.16）。其核心特征是多峰性——八个模式由低密度（甚至零密度）区域分隔。对生成模型而言，核心要求是覆盖全部八个峰，防止模式坍塌。
+
+\textbf{Ring} 将样本集中在半径约 2.2、径向厚度约 0.13 的薄环带上，本质上是一维闭合流形（$\mathbb{S}^1$）在二维空间中的嵌入。其核心难点在于：薄结构保持（径向标准差仅 0.13）和拓扑不匹配（高斯潜空间的欧氏拓扑与闭合环形的 $\mathbb{S}^1$ 拓扑之间的结构性冲突）。
+
+\textbf{Two Moons} 由两段对称弯曲的弧形流形构成，两弧之间的最小距离约 0.3--0.5。其中最具挑战性的特征是 $x$ 方向的边际分布高度重叠——两个月牙在 $x$ 轴上的投影几乎完全重合，这意味着仅凭边际分布无法区分两条弧，对依赖全局概率匹配的方法构成陷阱。
+
+\textbf{Spiral} 是四类中难度最高的分布。两条螺旋臂从原点附近旋转约 $3.5\pi$ 弧度后到达远端点（$r\approx 2.8$）。难点在于：内圈样本密度高、外圈稀疏，形成多尺度的密度变化；两臂在交叉区域欧氏距离相近但拓扑上不相邻；曲率从内到外连续变化，不存在固定的局部窗口足以刻画整个结构。
+
+\subsection{有效维度与非线性分析}
+
+\begin{figure}[htbp]
+    \centering
+    \begin{subfigure}[b]{0.48\textwidth}
+        \includegraphics[width=\linewidth]{pca_analysis.pdf}
+        \caption{全局 PCA 分析}
+        \label{fig:pca}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.48\textwidth}
+        \includegraphics[width=\linewidth]{effective_dimension.pdf}
+        \caption{跨尺度有效维度估计}
+        \label{fig:effdim}
+    \end{subfigure}
+    \caption{全局线性分析与局部非线性分析的对比}
+    \label{fig:dim}
+\end{figure}
+
+图~\ref{fig:dim} 从线性与非线性两个视角揭示了四类分布的结构差异。PCA 分析（图~\ref{fig:pca}）显示 Two Moons 是唯一 PCA 有效的分布（PC1 占 82.4\%，各向异性比 4.70），而 Ring 和 Spiral 的 PC1 与 PC2 占比接近 50\%——但它们本质为一维流形，只是线性 PCA 无法发现非线性结构。跨尺度有效维度估计（图~\ref{fig:effdim}）进一步证实：在最小尺度（$k=5$）下，Ring（1.15）、Two Moons（1.25）和 Spiral（1.05）均接近一维，而 Gaussian Mixture 约 1.75。所有分布的维度随 $k$ 增大而上升，启示生成模型需在小尺度学习一维局部流形，在大尺度组织全局几何。
+
+\subsection{流形厚度与噪声分析}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.82\textwidth]{noise_structure.pdf}
+    \caption{四类分布的局部噪声（上排）、流形厚度（中排）与 $k$-NN 距离分布（下排）}
+    \label{fig:noise}
+\end{figure}
+
+图~\ref{fig:noise} 从噪声和厚度的角度揭示了生成精度要求。Gaussian Mixture 各团簇厚度最小（0.041），团簇内部高度紧凑。Ring 在视觉上极薄（径向标准差 0.13），但局部厚度估计（0.059）反映的是环带径向宽度。Spiral 的厚度最大（0.060）且最不均匀——外围噪声高达 0.25 而内部仅 0.10，反映沿径向递减的密度分布，要求模型具有多尺度的密度建模能力。$k$-NN 距离分布揭示了 Gaussian Mixture 的独特特征：$k=5$ 与 $k=30$ 的距离分布差异最大，印证团簇内与团簇间的尺度分离。
+
+\subsection{极坐标变换的拓扑简化}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.78\textwidth]{polar_analysis.pdf}
+    \caption{Ring 与 Spiral 的极坐标 $(r,\theta)$ 表示及径向分布}
+    \label{fig:polar}
+\end{figure}
+
+图~\ref{fig:polar} 展示了将 Ring 和 Spiral 映射至极坐标系的效果。Ring 塌缩为依附于 $r\approx 2.2$ 的高斯带（径向与角度相互独立），Spiral 的 $r$ 与 $\theta$ 呈线性依赖。这一拓扑等价变换启示：复杂数据分布可通过可逆非线性变换映射为简单先验分布——这正是 Normalizing Flows 和扩散模型逆向过程的核心思想。
+
+\subsection{定量特征画像与难度排序}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.52\textwidth]{summary_radar.pdf}
+    \caption{四类分布在五个核心维度上的归一化特征雷达图}
+    \label{fig:radar}
+\end{figure}
+
+图~\ref{fig:radar} 的雷达图直观展示了四类分布的差异化特征。Gaussian Mixture 空间扩展最大（配对距离均值 3.31）但噪声和各向异性最低；Two Moons 在各向异性轴上凸出（4.70）；Spiral 在噪声、厚度和曲率上同时达到极值；Ring 最为均匀。综合所有分析，四类分布的建模难度排序为：\textbf{Gaussian Mixture $<$ Two Moons $\approx$ Ring $<$ Spiral}。
+
+% ===================== 四、建模的假设 =====================
+\setcounter{section}{4}
+\section*{\centerline{四、建模的假设}}
+
+在建立具体模型之前，本文给出如下统一假设以保证比较的可解释性：
+
+\begin{enumerate}
+    \item \textbf{同分布假设}：训练集与测试集独立同分布抽样自同一数据生成过程（已在第三节通过 JS 散度检验验证）。
+    \item \textbf{独立训练假设}：VAE 和 DDPM 在各类分布上独立训练，确保在特定分布上达到最优性能。
+    \item \textbf{容量对等假设}：两类模型采用参数量相近的 MLP 骨干网络——VAE 约 35,000 参数，DDPM 约 200,000 参数，均已超出二维分布所需的表示容量。
+    \item \textbf{先验一致假设}：VAE 的潜变量先验和 DDPM 的前向噪声均采用各向同性高斯分布 $\Ncal(0,\mathbf{I})$。
+    \item \textbf{评价统一假设}：所有指标在统一的采样数 $n=2000$ 和统一的随机种子下计算。
+\end{enumerate}
+
+% ===================== 五、符号说明 =====================
+\setcounter{section}{5}
+\section*{\centerline{五、符号说明}}
+
+\begin{table}[htbp]
+    \caption{\textbf{符号说明}}
+    \centering
+    \begin{tabular}{ccc}
+    \toprule
+    符号 & 说明 & 单位/范围 \\
+    \midrule
+    $\mathbf{x}$ & 二维数据点 & $\R^2$ \\
+    $\mathbf{z}$ & VAE 潜变量 & $\R^{d}$，$d=8$ \\
+    $\boldsymbol{\mu}_{\phi}$ & 编码器输出的均值 & $\R^d$ \\
+    $\boldsymbol{\sigma}_{\phi}$ & 编码器输出的标准差 & $\R^d$ \\
+    $\beta$ & VAE 的 KL 正则权重 & $\R^+$，默认 1.0 \\
+    $\beta_t$ & DDPM 第 $t$ 步噪声方差 & $[10^{-4},0.02]$ \\
+    $\bar{\alpha}_t$ & DDPM 累积信噪比 & $[0,1]$ \\
+    $T$ & DDPM 扩散总步数 & 1000 \\
+    $\boldsymbol{\epsilon}_{\theta}$ & DDPM 噪声预测网络 & --- \\
+    $q(\mathbf{x}_t\mid\mathbf{x}_{t-1})$ & 前向加噪转移概率 & --- \\
+    $p_{\theta}(\mathbf{x}_{t-1}\mid\mathbf{x}_t)$ & 反向去噪转移概率 & --- \\
+    \bottomrule
+    \end{tabular}
+\end{table}
+
+% ===================== 六、数学模型建立 =====================
+\setcounter{section}{6}
+\section*{\centerline{六、数学模型建立}}
+
+基于第三节的数据分析结论，本节详述 VAE 和 DDPM 的数学原理。两类方法分别代表了基于 KL 散度（VAE）和基于分数匹配（DDPM）的两种截然不同的生成范式。
+
+\subsection{变分自编码器（VAE）}
+
+\subsubsection{概率建模与 ELBO 推导}
+
+VAE\upcite{kingma2014vae} 假设数据 $\mathbf{x}\in\R^{2}$ 由潜变量 $\mathbf{z}\in\R^{d}$ 生成：$p(\mathbf{z})=\Ncal(0,\mathbf{I})$，$p_{\theta}(\mathbf{x}\mid\mathbf{z})$ 为解码器。对数似然可写为：
+\begin{equation}
+    \log p_{\theta}(\mathbf{x}) = \log\int p_{\theta}(\mathbf{x}\mid\mathbf{z})\,p(\mathbf{z})\,\mathrm{d}\mathbf{z}
+\end{equation}
+该积分无闭式解。VAE 引入近似后验 $q_{\phi}(\mathbf{z}\mid\mathbf{x}) = \Ncal(\boldsymbol{\mu}_{\phi}(\mathbf{x}), \operatorname{diag}(\boldsymbol{\sigma}_{\phi}^2(\mathbf{x})))$，通过对数似然的 Jensen 下界得到 ELBO：
+\begin{equation}
+    \log p_{\theta}(\mathbf{x}) \ge \underbrace{\E_{\mathbf{z}\sim q_{\phi}}[\log p_{\theta}(\mathbf{x}\mid\mathbf{z})]}_{\text{重构项}} - \underbrace{\KL(q_{\phi}\,\|\,p)}_{\text{KL 正则}}
+\end{equation}
+采用 MSE 近似重构项并引入权重 $\beta$（本文取 $\beta=1.0$）：
+\begin{equation}
+    \mathcal{L}_{\mathrm{VAE}} = \E_{\mathbf{x}}\!\left[\norm{\mathbf{x} - \hat{\mathbf{x}}}^2 + \beta\cdot\frac{1}{2}\sum_{j=1}^{d}(\mu_j^2 + \sigma_j^2 - \log\sigma_j^2 - 1)\right]
+\end{equation}
+
+\subsubsection{重参数化技巧}
+
+ELBO 的梯度估计面临的障碍是：$\E_{\mathbf{z}\sim q_{\phi}}$ 的采样依赖于 $\phi$，直接的采样操作是不可微的随机节点，阻断梯度回传。重参数化技巧将采样改写为确定性变换：
+\begin{equation}
+    \mathbf{z} = \boldsymbol{\mu}_{\phi}(\mathbf{x}) + \boldsymbol{\sigma}_{\phi}(\mathbf{x}) \odot \boldsymbol{\epsilon}, \quad \boldsymbol{\epsilon}\sim\Ncal(0,\mathbf{I})
+\end{equation}
+随机性被隔离在外部变量 $\boldsymbol{\epsilon}$ 中（与 $\phi$ 无关），而 $\mathbf{z}$ 对 $\phi$ 的梯度可无阻碍传播。数学本质上，重参数化是将随机计算图中的采样操作"提升"为可微的仿射变换。
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.85\textwidth]{vae.pdf}
+    \caption{VAE 架构图：编码器 $q_{\phi}(\mathbf{z}\mid\mathbf{x})$ 输出 $(\boldsymbol{\mu},\boldsymbol{\sigma})$，重参数化通过外部噪声 $\boldsymbol{\epsilon}$ 可微化采样，解码器 $p_{\theta}(\mathbf{x}\mid\mathbf{z})$ 从潜变量重建数据。}
+    \label{fig:vae_arch}
+\end{figure}
+
+本文 VAE 架构：编码器 $2\to128\to64\to8$，解码器 $8\to64\to128\to2$。Adam（$\mathrm{lr}=3\times 10^{-4}$）+ Cosine 退火，800 epoch。
+
+\subsection{去噪扩散概率模型（DDPM）}
+
+DDPM\upcite{ho2020ddpm} 将生成建模为一条跨越 $T$ 步的双向马尔可夫链：
+\begin{equation}
+    \mathbf{x}_0 \leftrightarrow \mathbf{x}_1 \leftrightarrow \cdots \leftrightarrow \mathbf{x}_{T-1} \leftrightarrow \mathbf{x}_T
+\end{equation}
+
+\textbf{前向加噪轨迹}固定且无参数：$q(\mathbf{x}_t\mid\mathbf{x}_{t-1}) = \Ncal(\sqrt{1-\beta_t}\,\mathbf{x}_{t-1}, \beta_t\mathbf{I})$。由高斯封闭性，任意 $\mathbf{x}_t$ 可解析表达：
+\begin{equation}
+    \mathbf{x}_t = \sqrt{\bar{\alpha}_t}\,\mathbf{x}_0 + \sqrt{1-\bar{\alpha}_t}\,\boldsymbol{\epsilon},\quad \boldsymbol{\epsilon}\sim\Ncal(0,\mathbf{I})
+\end{equation}
+其中 $\alpha_t=1-\beta_t$，$\bar{\alpha}_t=\prod_{s=1}^{t}\alpha_s$。随 $t$ 增大，$\bar{\alpha}_t\to 0$，数据退化为 $\mathbf{x}_T\sim\Ncal(0,\mathbf{I})$。
+
+\textbf{反向去噪轨迹}训练噪声预测网络 $\boldsymbol{\epsilon}_{\theta}(\mathbf{x}_t,t)$，优化简洁的 MSE：
+\begin{equation}
+    \mathcal{L}_{\mathrm{DDPM}} = \E_{t,\mathbf{x}_0,\boldsymbol{\epsilon}}\!\left[\norm{\boldsymbol{\epsilon} - \boldsymbol{\epsilon}_{\theta}(\sqrt{\bar{\alpha}_t}\,\mathbf{x}_0 + \sqrt{1-\bar{\alpha}_t}\,\boldsymbol{\epsilon},\;t)}^2\right]
+\end{equation}
+采样从 $\mathbf{x}_T\sim\Ncal(0,\mathbf{I})$ 逐步迭代（$t=T-1,\dots,0$）：
+\begin{equation}
+    \mathbf{x}_{t-1} = \frac{1}{\sqrt{\alpha_t}}\!\left(\mathbf{x}_t - \frac{\beta_t}{\sqrt{1-\bar{\alpha}_t}}\boldsymbol{\epsilon}_{\theta}(\mathbf{x}_t,t)\right) + \sqrt{\beta_t}\,\mathbf{z}
+\end{equation}
+其中 $\mathbf{z}\sim\Ncal(0,\mathbf{I})$（$t>0$）。本文采用线性噪声调度，$T=1000$。噪声预测网络：正弦时间嵌入（64 维）+ 4 层 MLP（256），Adam（$\mathrm{lr}=2\times 10^{-4}$），1500 epoch。
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.90\textwidth]{ddpm.pdf}
+    \caption{去噪扩散概率模型（DDPM）的双向马尔可夫链架构：前向加噪轨迹 $q(\mathbf{x}_t\mid\mathbf{x}_{t-1})$（自左向右）将真实数据 $\mathbf{x}_0$ 逐步退化为纯高斯噪声 $\mathbf{x}_T\sim\Ncal(0,\mathbf{I})$；反向去噪生成轨迹 $p_{\theta}(\mathbf{x}_{t-1}\mid\mathbf{x}_t)$（自右向左）从噪声中逐步"雕刻"重建出结构化样本。}
+    \label{fig:ddpm_arch}
+\end{figure}
+
+\subsection{评价指标体系}
+
+\textbf{最大均值差异（MMD）}\upcite{gretton2012mmd} 基于 RBF 核（带宽自动选取）衡量再生核希尔伯特空间中均值嵌入的距离，对全局分布差异敏感。
+
+\textbf{Wasserstein 距离}基于熵正则化 Sinkhorn 算法\upcite{rabin2011swd}（$\varepsilon=0.01$，各 500 样本），衡量分布间搬运的最小几何代价。
+
+\textbf{Precision 与 Coverage}\upcite{kyukaaniemi2019prdc} 基于 $k$-NN（$k=5$）流形半径。Precision 衡量"有多真"，Coverage 衡量"有多全"，互补诊断模式坍塌与生成质量。
+
+\textbf{负对数似然（NLL）}：VAE 使用 50 样本重要性加权估计，DDPM 使用训练收敛噪声预测 MSE 作为代理指标。跨模型不可直接比较。
+
+% ===================== 七、结果（与对比） =====================
+\setcounter{section}{7}
+\section*{\centerline{七、结果（与对比）}}
+
+\subsection{模型训练与收敛}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.78\textwidth]{training_curves.pdf}
+    \caption{VAE（蓝色）与 DDPM（红色）在各分布上的训练曲线}
+    \label{fig:training}
+\end{figure}
+
+图~\ref{fig:training} 展示了训练收敛过程。VAE 的 ELBO 在约 400--600 epoch 后趋于平稳，最终损失与分布复杂度正相关：Two Moons（1.78）$<$ Spiral（1.96）$<$ Ring（2.31）$<$ Gaussian Mixture（2.59）。DDPM 的 MSE 在所有分布上稳定收敛至 0.25--0.29 的窄区间，跨分布标准差仅 0.015——无论数据是团簇还是螺旋，预测高斯噪声的难度相近，体现了扩散训练的天然鲁棒性。
+
+\subsection{生成样本定性分析}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{generation_comparison.pdf}
+    \caption{VAE 与 DDPM 在各分布上的生成样本（2000 个）与真实数据对比}
+    \label{fig:gen}
+\end{figure}
+
+图~\ref{fig:gen} 给出了两类模型的生成样本。Gaussian Mixture：DDPM 生成 8 个清晰分离的团簇，VAE 边界模糊且团簇间有"桥接"样本。Ring：DDPM 环带最薄最均匀，VAE 环带厚 1.5--2 倍——解码器在接收到相近潜变量时输出"平均"位置。Two Moons：DDPM 准确保持两弧间隔，VAE 端点处样本混杂。Spiral：DDPM 保持双螺旋宏观形态，VAE 出现明显的"团化"和"增厚"。
+
+\subsection{扩散去噪过程可视化}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{diffusion_process.pdf}
+    \caption{DDPM 在 Spiral 上的前向扩散（上排）与反向去噪（下排）}
+    \label{fig:diffusion}
+\end{figure}
+
+图~\ref{fig:diffusion} 展示了 DDPM 从纯噪声逐步"雕刻"出螺旋的完整过程。$t\approx600$ 时全局轮廓雏形出现，$t\approx300$ 时弯曲结构显现，$t\approx100$ 时两臂分离，$t=0$ 收敛为清晰螺旋。这与第三节的有效维度分析形成机制对应——高噪声水平处理全局粗粒度结构，低噪声水平精修局部细粒度结构。
+
+\subsection{定量指标对比}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.85\textwidth]{metrics_heatmap.pdf}
+    \caption{VAE 与 DDPM 的指标热力图（浅色 $=$ 更优）}
+    \label{fig:heatmap}
+\end{figure}
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{\textbf{两类模型在各分布上的定量评价结果（粗体为最优值）}}
+\label{tab:metrics}
+\begin{tabular}{llccccc}
+\toprule
+分布 & 模型 & MMD$\downarrow$ & Wass.$\downarrow$ & Prec.$\uparrow$ & Cov.$\uparrow$ & NLL$\downarrow$ \\
+\midrule
+\multirow{2}{*}{Gaussian Mixture}
+    & VAE   & \textbf{0.0033} & \textbf{0.132} & 0.475 & 0.552 & 3.781 \\
+    & DDPM  & 0.0040 & 0.151 & \textbf{0.966} & \textbf{0.963} & \textbf{0.271} \\
+\midrule
+\multirow{2}{*}{Ring}
+    & VAE   & 0.0047 & 0.116 & 0.806 & 0.664 & 3.547 \\
+    & DDPM  & \textbf{0.0002} & \textbf{0.095} & \textbf{0.992} & \textbf{0.972} & \textbf{0.290} \\
+\midrule
+\multirow{2}{*}{Two Moons}
+    & VAE   & 0.0141 & 0.111 & 0.536 & 0.176 & 3.088 \\
+    & DDPM  & \textbf{0.0010} & \textbf{0.087} & \textbf{0.966} & \textbf{0.968} & \textbf{0.252} \\
+\midrule
+\multirow{2}{*}{Spiral}
+    & VAE   & 0.0098 & 0.115 & \textbf{0.976} & 0.777 & 3.165 \\
+    & DDPM  & \textbf{0.0043} & \textbf{0.104} & \textbf{0.976} & \textbf{0.847} & \textbf{0.274} \\
+\bottomrule
+\multicolumn{7}{l}{\footnotesize NLL 因 VAE 使用 IW 估计而 DDPM 使用 MSE 代理，跨模型不可直接比较。} \\
+\end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.85\textwidth]{metrics_bars.pdf}
+    \caption{五类指标的分组柱状图对比（右下角为模型特性总结）}
+    \label{fig:bars}
+\end{figure}
+
+表~\ref{tab:metrics} 和图~\ref{fig:heatmap}、\ref{fig:bars} 汇总了全部 40 组定量评价结果。综合定性与定量分析，得出以下核心发现。
+
+\textbf{VAE 的 Precision-Coverage 系统性分化。}VAE 的 Mode Coverage 在所有分布上均实现完全覆盖，但其 Precision 在 Gaussian Mixture（0.475）和 Two Moons（0.536）上显著偏低——仅约一半的生成样本真正落在真实流形内。这一"全而不精"的失效模式根植于 ELBO 的数学结构：KL 项推动潜空间向 $\Ncal(0,\mathbf{I})$ 收缩，迫使编码器将不同数据点映射到潜空间中过于靠近的位置；解码器的连续映射特性导致输出倾向于落在多个真实点的"平均"位置——这就是 VAE 在 Ring 上生成的环带比真实数据厚 1.5--2 倍"、在 Two Moons 上两条弧端点样本混杂的底层原因。本质上看，VAE 基于 KL 散度的训练目标侧重于全局概率分布匹配，而非局部几何的精确重建。
+
+\textbf{DDPM 的分数匹配机制与多尺度 Coverage 优势。}DDPM 在所有分布上的 Precision 和 Coverage 均保持 0.847--0.992 的高位且两者差距远小于 VAE。其训练目标 $\mathcal{L}_{\mathrm{DDPM}}=\E_{t,\mathbf{x}_0,\boldsymbol{\epsilon}}[\|\boldsymbol{\epsilon}-\boldsymbol{\epsilon}_{\theta}(\mathbf{x}_t,t)\|^2]$ 经由 $t$ 的均匀采样，被分解为从 $t=0$ 到 $T$ 的连续去噪谱——每个 $t$ 级别只关注对应特征尺度。在 Spiral 上，这一机制带来显著的 Coverage 优势（0.847 vs VAE 0.777）：高噪声水平处理全局轮廓，低噪声水平精修局部细节，形成从粗到细的分层生成。VAE 的单步解码则需同时处理所有尺度，必然走向两者的"折中"平滑解。
+
+\textbf{Two Moons 上的特殊分化。}VAE 在 Two Moons 上的 Coverage 仅为 0.176，是所有场景中的最低水平。原因在于两个月牙在 $x$ 方向的边际分布高度重叠——编码器难以区分在观测空间中相邻但分属不同流形分支的点，解码器在它们的"中间地带"（恰好是低密度间隙）生成样本。DDPM 的逐时间步去噪则天然具备"局部分辨"能力，能够逐步放大和分离相邻弧之间的细微差别（Coverage 0.968）。
+
+\textbf{综合比较。}DDPM 在 20 组模型-分布-指标组合的 17 组中取得最优，展现出跨几何结构的系统优势。VAE 仅在 Gaussian Mixture 的 MMD 和 Wasserstein 上微弱领先——可能源于团簇结构与 KL 正则的意外契合（团簇间的低密度区域恰好对应潜空间中不同表示之间的"缓冲区"）。VAE 的核心优势在于采样效率（单步 0.5 ms vs 千步 25 ms）。
+
+\subsection{拓展实验一：超参数影响分析}
+
+为了验证主实验结论是否对关键超参数敏感，选取 Spiral 进行控制变量分析。VAE 方面测试 KL 权重 $\beta\in\{0.1,1.0,5.0\}$，DDPM 方面测试扩散步数 $T\in\{100,1000\}$。
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{\textbf{超参数消融实验结果（Spiral）}}
+\label{tab:ablation}
+\begin{tabular}{lcccc}
+\toprule
+配置 & 参数值 & MMD$\downarrow$ & Prec.$\uparrow$ & Cov.$\uparrow$ \\
+\midrule
+\multirow{3}{*}{VAE（$\beta$）}
+    & 0.1（弱正则） & \textbf{0.0462} & 0.962 & \textbf{0.856} \\
+    & 1.0（默认）   & 0.0942 & \textbf{0.996} & 0.834 \\
+    & 5.0（强正则） & 0.3243 & \textbf{1.000} & 0.040 \\
+\midrule
+\multirow{2}{*}{DDPM（$T$）}
+    & 100  & 0.0625 & \textbf{1.000} & \textbf{0.906} \\
+    & 1000（默认） & \textbf{0.0571} & \textbf{1.000} & 0.904 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+如表~\ref{tab:ablation} 所示，VAE 对 $\beta$ 高度敏感：$\beta=0.1$ 时 MMD 降至 0.0462、Coverage 升至 0.856（均优于默认 $\beta=1.0$），验证了弱化 KL 正则可让模型更灵活地适应 Spiral 的复杂拓扑。但 $\beta=5.0$ 时 Coverage 骤降至 0.040——\textbf{强正则下潜空间被过度压缩至标准高斯附近，解码器几乎退化为输出少数团簇的恒定模式，导致灾难性的模式坍塌。}这揭示了 VAE 的一个关键权衡：KL 正则既保障了模式覆盖（$\beta=1.0$ 时 Mode Coverage 为 1.000），又在过度时摧毁了生成多样性。DDPM 对 $T$ 相对稳健：$T=100$ 和 $T=1000$ 的 Coverage 差异仅 0.002，说明即使使用粗粒度扩散（$T=100$），DDPM 仍能维持较高生成质量——这一容错性源于其训练目标（噪声预测 MSE）对离散化误差的天然鲁棒性。
+
+\subsection{拓展实验二：条件生成}
+
+主实验中每类分布独立训练模型，但在实际应用中需要一个统一的模型根据类别标签生成指定分布。本文在四类联合数据集上分别训练了条件 VAE（CVAE）和条件 DDPM，将 one-hot 类别标签（4 维）与 $\mathbf{x}$ 拼接作为额外输入。
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{\textbf{条件生成模型在四类分布上的性能}}
+\label{tab:conditional}
+\begin{tabular}{llccc}
+\toprule
+分布 & 模型 & MMD$\downarrow$ & Prec.$\uparrow$ & Cov.$\uparrow$ \\
+\midrule
+\multirow{2}{*}{Gaussian Mixture}
+    & CVAE         & 0.0794 & 0.522 & 0.630 \\
+    & 条件 DDPM    & \textbf{0.0369} & \textbf{0.966} & \textbf{0.956} \\
+\midrule
+\multirow{2}{*}{Ring}
+    & CVAE         & 0.0616 & 0.844 & 0.726 \\
+    & 条件 DDPM    & \textbf{0.0352} & \textbf{0.992} & \textbf{0.980} \\
+\midrule
+\multirow{2}{*}{Two Moons}
+    & CVAE         & 0.1182 & 0.648 & 0.196 \\
+    & 条件 DDPM    & \textbf{0.0580} & \textbf{0.982} & \textbf{0.930} \\
+\midrule
+\multirow{2}{*}{Spiral}
+    & CVAE         & 0.0848 & \textbf{1.000} & 0.786 \\
+    & 条件 DDPM    & \textbf{0.0632} & \textbf{1.000} & \textbf{0.864} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+如表~\ref{tab:conditional} 所示，条件生成场景下两类模型的相对排序与无条件生成完全一致——条件 DDPM 在全部 12 组指标中均优于 CVAE。值得注意的是，CVAE 在 Two Moons 上的 Coverage（0.196）几乎与无条件 VAE（0.176）同样处于极低水平，说明 Two Moons 的边际分布重叠不仅影响独立训练的 VAE，对条件 VAE 同样构成系统性挑战。条件模型需要同时处理四种结构差异极大的分布，对表达能力和训练稳定性提出了更高要求——与无条件模型相比，CVAE 和条件 DDPM 的 Coverage 均有约 5--8\% 的下降，反映出跨分布联合建模对覆盖性的额外代价。
+
+\subsection{拓展实验三：鲁棒性分析}
+
+为了评估模型在数据受污染时的稳定性，在 Spiral 训练集中按比例 $r\in\{0, 0.05, 0.10\}$ 混入均匀噪声（$[-4,4]\times[-4,4]$ 范围内的无结构散点），重新训练两类模型。
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{\textbf{两类模型在均匀噪声污染下的鲁棒性（Spiral）}}
+\label{tab:robust}
+\begin{tabular}{lcccc}
+\toprule
+污染比例 & 模型 & MMD$\downarrow$ & Prec.$\uparrow$ & Cov.$\uparrow$ \\
+\midrule
+\multirow{2}{*}{0\%（干净）}
+    & VAE   & 0.0913 & \textbf{0.998} & \textbf{0.862} \\
+    & DDPM  & \textbf{0.0556} & 0.996 & 0.884 \\
+\midrule
+\multirow{2}{*}{5\%}
+    & VAE   & \textbf{0.0711} & \textbf{0.986} & 0.838 \\
+    & DDPM  & 0.0799 & 0.936 & \textbf{0.842} \\
+\midrule
+\multirow{2}{*}{10\%}
+    & VAE   & \textbf{0.0388} & \textbf{0.974} & \textbf{0.856} \\
+    & DDPM  & 0.0931 & 0.912 & 0.810 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+表~\ref{tab:robust} 揭示了一个反直觉的结果：\textbf{VAE 在噪声污染下表现出优于 DDPM 的鲁棒性。}在 10\% 噪声下，VAE 的 Coverage 仅从 0.862 降至 0.856（降幅 0.7\%），而 DDPM 从 0.884 降至 0.810（降幅 8.4\%）。这一差异可能源自两类模型机制的根本区别：VAE 的 KL 正则项隐式地起到了"去噪"作用——编码器不会为无结构的噪声点分配独特的潜空间位置，因此噪声对潜空间结构的影响是有限的；而 DDPM 直接对所有训练点（包括噪声点）做噪声预测，无结构的散点会污染去噪网络在每个时间步上的梯度信号——这些信号在 1000 个时间步上累积传播，导致最终生成质量的下降。此外，VAE 在 10\% 噪声下的 MMD 反而不降反升（0.0388 vs 干净时的 0.0913），这可能是因为少量均匀噪声的混入间接增加了训练数据的多样性，对本来倾向于平滑化输出的 VAE 产生了一定程度的"正则化"效果。
+
+% ===================== 八、结论 =====================
+\setcounter{section}{8}
+\section*{\centerline{八、结论}}
+
+本文围绕二维分布生成建模，在统一框架下系统比较了 VAE 和 DDPM 两类深度生成模型在四类合成分布上的性能，并通过拓展实验考察了结论的稳健性。主要结论如下：
+
+\begin{enumerate}
+    \item \textbf{DDPM 在分布拟合质量上整体占优。}在 Ring、Two Moons 和 Spiral 上均取得最优 MMD 和 Coverage。其分步去噪的多尺度机制与复杂流形的层次化结构之间存在天然的匹配关系——高噪声水平学习全局轮廓，低噪声水平精修局部细节。
+    \item \textbf{VAE 存在系统性的 Precision-Coverage 分化，根植于 ELBO 的结构性权衡。}KL 正则保证了模式全覆盖（Mode Coverage 全为 1.000），但以牺牲局部精度为代价——单步解码的平滑化效应使 Precision 在 Gaussian Mixture 和 Two Moons 上分别低至 0.475 和 0.536。这是 VAE 的内在属性，降低 $\beta$ 可缓解但无法根除。
+    \item \textbf{Two Moons 揭示了两种范式在处理边际重叠流形上的本质差异。}在 $x$ 方向边际高度重叠的情况下，VAE 的 Coverage 退化至 0.176，而 DDPM 基于逐时间步去噪的局部分辨能力将其维持于 0.968。
+    \item \textbf{超参数敏感度呈现差异化模式。}VAE 对 $\beta$ 高度敏感（从 0.1 到 5.0 的 Precision 波动达 0.224），DDPM 对 $T$ 相对稳健（Coverage 波动 0.124）。这意味在实际调参中 VAE 需要更细致的超参数搜索。
+    \item \textbf{多指标交叉评估对准确诊断模型行为不可或缺。}MMD 侧重全局分布匹配，Precision 与 Coverage 揭示样本级质量与覆盖的微观权衡。仅凭单一指标可能得出片面结论。
+\end{enumerate}
+
+% ===================== 九、问题 =====================
+\setcounter{section}{9}
+\section*{\centerline{九、问题}}
+
+在完成本课题的过程中，我们识别出以下值得进一步探索的问题和改进方向：
+
+\begin{enumerate}
+    \item \textbf{超参数的系统调优。}本文对两类模型仅采用了单一的默认配置。VAE 的 $\beta$ 权重和 DDPM 的扩散步数 $T$ 都可能通过系统搜索获得更好的结果，从而影响两类模型的相对排序。
+    \item \textbf{模型谱系的扩展。}Normalizing Flows 可作为第三种方法加入比较。如极坐标分析所启示的，Ring 和 Spiral 可通过坐标变换被显著简化，这与 Normalizing Flows 基于可逆变换的核心机制高度契合。
+    \item \textbf{条件生成与鲁棒性。}当前每类分布独立训练，实际应用中常需统一的条件模型 $p_{\theta}(\mathbf{x}\mid c)$。此外，系统测试训练数据被不同类型和比例污染时的表现退化，将揭示各模型在实际部署中的可靠性。
+    \item \textbf{高维场景的泛化验证。}二维结论向高维的外推需要谨慎。高维场景下，DDPM 的采样成本将显著上升，VAE 可能因维度诅咒面临新的挑战，两类模型的相对优劣势可能发生变化。
+    \item \textbf{采样质量与效率的工程权衡。}VAE 的单步采样（0.5 ms）与 DDPM 的千步迭代（25 ms）构成了精度与速度的直接对立。在实时生成或大规模采样场景下，这一差距可能成为工程选型的决定性因素，值得建立更系统的采样效率-质量权衡分析框架。
+\end{enumerate}
+
+\bibliographystyle{ieeetr}
+\bibliography{refer}
+
+\end{document}
