@@ -1,63 +1,24 @@
-"""Training orchestration — train all models on all classes."""
+"""Training orchestration — train VAE and DDPM on all four classes."""
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Dict, Tuple
 
 import numpy as np
 
 from code.config import CLASS_NAMES, N_CLASSES, MODEL_DIR, ModelConfig
 from code.dataset import load_data, get_class_data
-from code.models import KDEModel, GMMModel, VAEModel, DiffusionModel
+from code.models import VAEModel, DiffusionModel
 from code.utils import get_device
 
-
-# Type alias: model_type -> class_idx -> model
 ModelDict = Dict[str, Dict[int, object]]
 
 
 def train_all_models(cfg: ModelConfig) -> Tuple[ModelDict, np.ndarray, np.ndarray]:
-    """Train KDE, GMM, VAE, and Diffusion on each of the four classes.
-
-    Returns
-    -------
-    all_models : ModelDict
-    train : np.ndarray
-    train_label : np.ndarray
-    """
+    """Train VAE and DDPM on each of the four classes."""
     train, train_label = load_data("train")
     device = get_device()
-
     all_models: ModelDict = {}
-
-    # ── KDE ───────────────────────────────────────────────────────────────
-    print("\n" + "=" * 60)
-    print("Training: KDE")
-    print("=" * 60)
-    kde_models = {}
-    for c in range(N_CLASSES):
-        data = get_class_data(train, train_label, c)
-        print(f"\n  Class {c}: {CLASS_NAMES[c]}  (n = {len(data)})")
-        model = KDEModel().fit(data, cv_bandwidths=cfg.kde_cv_bandwidths)
-        model.save(MODEL_DIR / f"kde_class{c}.pt")
-        kde_models[c] = model
-    all_models["KDE"] = kde_models
-
-    # ── GMM ───────────────────────────────────────────────────────────────
-    print("\n" + "=" * 60)
-    print("Training: GMM")
-    print("=" * 60)
-    gmm_models = {}
-    for c in range(N_CLASSES):
-        data = get_class_data(train, train_label, c)
-        print(f"\n  Class {c}: {CLASS_NAMES[c]}  (n = {len(data)})")
-        model = GMMModel(
-            covariance_type=cfg.gmm_covariance_type,
-        ).fit(data, max_components=cfg.gmm_max_components)
-        model.save(MODEL_DIR / f"gmm_class{c}.pt")
-        gmm_models[c] = model
-    all_models["GMM"] = gmm_models
 
     # ── VAE ───────────────────────────────────────────────────────────────
     print("\n" + "=" * 60)
