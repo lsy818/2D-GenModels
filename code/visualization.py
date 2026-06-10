@@ -19,8 +19,6 @@ import seaborn as sns
 from scipy import spatial
 from sklearn.decomposition import PCA
 from sklearn.neighbors import KernelDensity, NearestNeighbors
-from PIL import Image
-
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
@@ -37,10 +35,8 @@ EVALUATION = ROOT / "figures/evaluation"
 for d in [ANALYSIS, GENERATION, EVALUATION]:
     d.mkdir(parents=True, exist_ok=True)
 
-def save_png_pdf(fig, stem: str, subdir: Path):
-    png = subdir / f"{stem}.png"
-    fig.savefig(png, dpi=180, bbox_inches="tight")
-    Image.open(png).save(subdir / f"{stem}.pdf", "PDF", resolution=150.0)
+def save_fig(fig, stem: str, subdir: Path):
+    fig.savefig(subdir / f"{stem}.pdf", dpi=180, bbox_inches="tight")
     plt.close(fig)
     print(f"  Saved: {stem}")
 
@@ -76,7 +72,7 @@ def make_comparison_overview():
         ax.set(xlim=(-4, 4), ylim=(-4, 4), aspect="equal", title="KDE Density", xlabel="x", ylabel="y")
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     fig.suptitle("Overview of Four 2D Distributions", fontsize=15, fontweight="bold")
-    save_png_pdf(fig, "comparison_overview", ANALYSIS)
+    save_fig(fig, "comparison_overview", ANALYSIS)
 
 
 def make_pca_figure():
@@ -99,7 +95,7 @@ def make_pca_figure():
         for bar, val in zip(bars, pca.explained_variance_ratio_):
             ax.text(bar.get_x()+bar.get_width()/2, bar.get_height()+0.02, f"{val:.3f}", ha="center", fontsize=9)
     fig.suptitle("PCA Analysis", fontsize=15, fontweight="bold")
-    save_png_pdf(fig, "pca_analysis", ANALYSIS)
+    save_fig(fig, "pca_analysis", ANALYSIS)
 
 
 def make_effective_dimension():
@@ -121,7 +117,7 @@ def make_effective_dimension():
         ax.set(title=CLASS_NAMES[c], xlabel="k", ylabel="Estimated Dim", ylim=(0.5, 2.5))
         ax.legend(fontsize=8); ax.grid(alpha=0.2)
     fig.suptitle("Effective Dimensionality Across Scales", fontsize=15, fontweight="bold")
-    save_png_pdf(fig, "effective_dimension", ANALYSIS)
+    save_fig(fig, "effective_dimension", ANALYSIS)
 
 
 def make_noise_structure():
@@ -151,7 +147,7 @@ def make_noise_structure():
             axes[2, c].hist(dk[:, -1], bins=40, density=True, alpha=al, histtype="step", lw=1.5, ls=sty, label=f"k={k}")
         axes[2, c].set(title="k-NN Distance", xlabel="Distance", ylabel="Density"); axes[2, c].legend(fontsize=7)
     fig.suptitle("Noise & Structure Analysis", fontsize=15, fontweight="bold")
-    save_png_pdf(fig, "noise_structure", ANALYSIS)
+    save_fig(fig, "noise_structure", ANALYSIS)
 
 
 def make_polar_analysis():
@@ -171,7 +167,7 @@ def make_polar_analysis():
         ax.axvline(r.mean()+r.std(), color="orange", ls=":", lw=1)
         ax.set(title="p(r)", xlabel="r", ylabel="Density"); ax.legend(fontsize=8)
     fig.suptitle("Polar Coordinate Analysis", fontsize=15, fontweight="bold")
-    save_png_pdf(fig, "polar_analysis", ANALYSIS)
+    save_fig(fig, "polar_analysis", ANALYSIS)
 
 
 def make_summary_radar():
@@ -194,7 +190,7 @@ def make_summary_radar():
     ax.set_xticks(angles[:-1]); ax.set_xticklabels(labels, fontsize=10)
     ax.set(ylim=(0, 1.1), title="Comparative Characteristics")
     ax.legend(loc="upper right", bbox_to_anchor=(1.3, 1.1), fontsize=8)
-    save_png_pdf(fig, "summary_radar", ANALYSIS)
+    save_fig(fig, "summary_radar", ANALYSIS)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -225,7 +221,7 @@ def make_all_generation():
         lines1, labels1 = ax.get_legend_handles_labels(); lines2, labels2 = ax2.get_legend_handles_labels()
         ax.legend(lines1+lines2, labels1+labels2, loc="upper right", fontsize=8)
     fig.suptitle("Training Curves: VAE & DDPM", fontsize=14, fontweight="bold")
-    save_png_pdf(fig, "training_curves", GENERATION)
+    save_fig(fig, "training_curves", GENERATION)
 
     # ── generation_comparison (4 rows × 3 cols: Real, VAE, DDPM) ──
     fig, axes = plt.subplots(4, 3, figsize=(12, 15), constrained_layout=True)
@@ -240,7 +236,7 @@ def make_all_generation():
             if m_idx == 0: ax.set_ylabel(CLASS_NAMES[c], fontsize=10, fontweight="bold")
             ax.grid(alpha=0.15)
     fig.suptitle("Generated Samples: VAE vs DDPM", fontsize=14, fontweight="bold")
-    save_png_pdf(fig, "generation_comparison", GENERATION)
+    save_fig(fig, "generation_comparison", GENERATION)
 
     # ── diffusion_process (Spiral) ──
     import torch
@@ -272,7 +268,7 @@ def make_all_generation():
         ax.scatter(pts[:, 0], pts[:, 1], s=2, alpha=0.5, c="#984ea3", linewidths=0, rasterized=True)
         ax.set(xlim=(-4, 4), ylim=(-4, 4), aspect="equal", title=f"t={tv} (reverse)"); ax.grid(alpha=0.15)
     fig.suptitle("Diffusion Process — Spiral", fontsize=14, fontweight="bold")
-    save_png_pdf(fig, "diffusion_process", GENERATION)
+    save_fig(fig, "diffusion_process", GENERATION)
 
     # ── evaluation metrics ──
     from code.metrics import compute_all_metrics
@@ -313,7 +309,7 @@ def make_all_generation():
     cbar = fig.colorbar(im, ax=axes, shrink=0.85, pad=0.02)
     cbar.set_label("Normalised  (lighter = better)", fontsize=10)
     fig.suptitle("Generation Quality Metrics: VAE vs DDPM", fontsize=15, fontweight="bold")
-    save_png_pdf(fig, "metrics_heatmap", EVALUATION)
+    save_fig(fig, "metrics_heatmap", EVALUATION)
 
     # ── bars (5 metrics, 2×3 layout with 6th cell = legend area) ──
     palette = sns.color_palette("muted", n_colors=2)
@@ -342,7 +338,7 @@ def make_all_generation():
     ax6.text(0.5, 0.5, summary_text, transform=ax6.transAxes, fontsize=10, ha="center", va="center",
              family="monospace", bbox=dict(boxstyle="round,pad=0.8", facecolor="#f5f5f5", edgecolor="#ddd"))
     fig.suptitle("Metrics: VAE vs DDPM", fontsize=15, fontweight="bold")
-    save_png_pdf(fig, "metrics_bars", EVALUATION)
+    save_fig(fig, "metrics_bars", EVALUATION)
 
     print("\nAll generation + evaluation figures complete.")
 
