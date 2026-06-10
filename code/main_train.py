@@ -10,7 +10,7 @@ from __future__ import annotations
 from code.config import ExperimentConfig, SystemConfig
 from code.dataset import load_data
 from code.trainer import train_all_models
-from code.visualize import make_all_generation_figures
+from code.visualization import make_all_generation_and_eval_figures
 
 
 def main() -> None:
@@ -25,10 +25,7 @@ def main() -> None:
     print("\n" + "=" * 60)
     print("MODEL VISUALISATION")
     print("=" * 60)
-    make_all_generation_figures(
-        all_models, train, train_label,
-        n_samples=cfg.n_samples_generate,
-    )
+    make_all_generation_and_eval_figures()
     print("\nDone.")
 
 
