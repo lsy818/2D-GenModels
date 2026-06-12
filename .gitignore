@@ -8,4 +8,6 @@ report/*.log
 report/*.out
 report/*.toc
 report/*.gz
-report/template.tex
+report/*.png
+report/*.pdf
+report/*.txt
