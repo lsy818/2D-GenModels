@@ -1,6 +1,7 @@
-data/*.npy
+data/
 **/__pycache__/
-models/*.pt
+output/
+models/**/*.pt
 report/*.aux
 report/*.bbl
 report/*.blg
@@ -8,6 +9,3 @@ report/*.log
 report/*.out
 report/*.toc
 report/*.gz
-report/*.png
-report/*.pdf
-report/*.txt
