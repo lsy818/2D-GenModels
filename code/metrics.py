@@ -6,8 +6,7 @@ and return a scalar or dict.
 
 from __future__ import annotations
 
-from typing import Dict, Optional, Callable
-from pathlib import Path
+from typing import Dict, Optional
 
 import numpy as np
 from scipy import spatial
@@ -135,228 +134,41 @@ def coverage_precision(real: np.ndarray, generated: np.ndarray,
     return {"precision": precision, "coverage": coverage}
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  5. Negative Log-Likelihood  (NLL)
-# ═══════════════════════════════════════════════════════════════════════════════
+def evaluate_generation_metrics(
+    real: np.ndarray,
+    generated: np.ndarray,
+    max_subsample: int = 500,
+) -> Dict[str, float]:
+    """Compute the four report metrics used by extension experiments.
 
-def nll_kde_gmm(model, test_data: np.ndarray) -> float:
-    """NLL for KDE / GMM (models with ``score_samples``)."""
-    logp = model.score_samples(test_data)
-    return float(-np.mean(logp))
-
-
-def nll_vae_iwae(model, test_data: np.ndarray, n_iw_samples: int = 50,
-                 batch_size: int = 256) -> float:
-    """Importance-weighted NLL bound for VAE."""
-    import torch
-    vae = model.vae
-    device = model.device
-    vae.eval()
-
-    data = torch.FloatTensor(test_data).to(device)
-    nll_total = 0.0
-
-    for i in range(0, len(data), batch_size):
-        batch = data[i:i + batch_size]
-        b = batch.size(0)
-
-        # Repeat for IW samples: (b * n_iw, 2)
-        x_expanded = batch.repeat_interleave(n_iw_samples, dim=0)
-
-        with torch.no_grad():
-            mu, logvar = vae.encoder(x_expanded)
-            z = vae.reparameterise(mu, logvar)
-            recon = vae.decoder(z)
-
-            # log p(x|z) — Gaussian with fixed variance
-            log_px_z = -0.5 * ((recon - x_expanded) ** 2).sum(dim=1) \
-                       - 0.5 * 2 * np.log(2 * np.pi)
-            # log p(z) — standard normal
-            log_pz = -0.5 * (z ** 2).sum(dim=1) - 0.5 * vae.latent_dim * np.log(2 * np.pi)
-            # log q(z|x)
-            log_qz_x = -0.5 * (logvar.sum(dim=1)
-                               + ((z - mu) ** 2 / torch.exp(logvar)).sum(dim=1)
-                               + vae.latent_dim * np.log(2 * np.pi))
-
-            log_w = log_px_z + log_pz - log_qz_x  # (b * n_iw,)
-            log_w = log_w.view(b, n_iw_samples)
-            # logsumexp over IW samples
-            log_px = torch.logsumexp(log_w, dim=1) - np.log(n_iw_samples)
-            nll_total -= log_px.sum().item()
-
-    return nll_total / len(test_data)
-
-
-def nll_diffusion_approx(model, test_data: np.ndarray,
-                         n_timesteps_sample: int = 100) -> float:
-    """Approximate NLL for diffusion via discrete ELBO.
-
-    This computes a simplified ELBO: E_t[||noise - pred_noise||^2].
-    """
-    import torch
-    model.denoiser.eval()
-    device = model.device
-
-    data = torch.FloatTensor(test_data).to(device)
-    n = len(data)
-    total_loss = 0.0
-
-    # Sample a subset of timesteps for efficiency
-    ts = np.linspace(0, model.n_steps - 1, n_timesteps_sample, dtype=int)
-    batch_size = 256
-
-    for t_idx in ts:
-        for i in range(0, n, batch_size):
-            batch = data[i:i + batch_size].to(device)
-            b = batch.size(0)
-            t = torch.full((b,), t_idx, device=device, dtype=torch.long)
-
-            sqrt_a = model._sqrt_alphas_cumprod_t[t].view(-1, 1)
-            sqrt_1ma = model._sqrt_one_minus_t[t].view(-1, 1)
-            noise = torch.randn_like(batch)
-            xt = sqrt_a * batch + sqrt_1ma * noise
-
-            with torch.no_grad():
-                pred = model.denoiser(xt, t)
-                loss = ((pred - noise) ** 2).sum(dim=1).mean()
-                total_loss += loss.item() * b
-
-    return total_loss / (n * n_timesteps_sample)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  6. Mode Coverage
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def mode_coverage(real: np.ndarray, generated: np.ndarray,
-                  class_idx: int, class_name: str) -> Dict[str, float]:
-    """Fraction of "modes" covered by generated samples.
-
-    Mode definition is distribution-dependent:
-
-    - **Gaussian Mixture**: 8 cluster centres on a circle
-    - **Ring**: 12 angular sectors
-    - **Two Moons**: 2 crescent arms
-    - **Spiral**: 16 combined (radial × angular) sectors
+    Returns MMD, Wasserstein, Precision, and Coverage with the same sampling
+    budget used throughout the report's extension tables.
     """
     real, generated = _ensure_float32(real, generated)
+    rng = np.random.default_rng(42)
+    n = min(len(real), len(generated), max_subsample)
+    X = real[rng.choice(len(real), n, replace=False)]
+    Y = generated[rng.choice(len(generated), n, replace=False)]
 
-    if class_idx == 0:              # Gaussian Mixture — 8 modes
-        num_modes = 8
-        radius = 2.6
-        angles = np.linspace(0, 2 * np.pi, num_modes, endpoint=False)
-        centres = np.column_stack([np.cos(angles), np.sin(angles)]) * radius
-        return _mode_coverage_centres(generated, centres, num_modes)
+    pooled = np.concatenate([X, Y])
+    dists = cdist(pooled[:200], pooled[:200])
+    positive = dists[dists > 0]
+    sigma = float(np.median(positive)) if positive.size else 1.0
+    gamma = 0.5 / max(sigma, 1e-3) ** 2
 
-    elif class_idx == 1:            # Ring — 12 angular sectors
-        return _mode_coverage_angular(generated, n_sectors=12)
+    def rbf(A: np.ndarray, B: np.ndarray) -> float:
+        return float(np.mean(np.exp(-gamma * cdist(A, B, "sqeuclidean"))))
 
-    elif class_idx == 2:            # Two Moons — 2 arms
-        return _mode_coverage_two_moons(generated)
+    mmd = np.sqrt(max(rbf(X, X) + rbf(Y, Y) - 2.0 * rbf(X, Y), 0.0))
 
-    elif class_idx == 3:            # Spiral — combined sectors
-        return _mode_coverage_spiral(generated)
-    else:
-        return {"mode_coverage": 0.0, "n_modes_total": 0, "n_modes_covered": 0}
+    cp = coverage_precision(X, Y, max_subsample=n)
+    wass = wasserstein_sinkhorn(real, generated, max_subsample=n)
 
-
-def _mode_coverage_centres(generated: np.ndarray, centres: np.ndarray,
-                           n_modes: int) -> Dict[str, float]:
-    """Check which centre each generated sample is closest to."""
-    tree = spatial.cKDTree(centres)
-    _, assignments = tree.query(generated, k=1)
-    covered = len(np.unique(assignments))
-    return {"mode_coverage": covered / n_modes,
-            "n_modes_total": n_modes, "n_modes_covered": covered}
+    return {
+        "MMD": float(mmd),
+        "Wasserstein": float(wass),
+        "Precision": cp["precision"],
+        "Coverage": cp["coverage"],
+    }
 
 
-def _mode_coverage_angular(generated: np.ndarray, n_sectors: int = 12
-                           ) -> Dict[str, float]:
-    theta = np.arctan2(generated[:, 1], generated[:, 0])
-    bins = np.linspace(-np.pi, np.pi, n_sectors + 1)
-    sector_ids = np.digitize(theta, bins) - 1
-    sector_ids = np.clip(sector_ids, 0, n_sectors - 1)
-    covered = len(np.unique(sector_ids))
-    return {"mode_coverage": covered / n_sectors,
-            "n_modes_total": n_sectors, "n_modes_covered": covered}
-
-
-def _mode_coverage_two_moons(generated: np.ndarray) -> Dict[str, float]:
-    """Two moons — classify by y position relative to separator ~0.25."""
-    # Upper moon: roughly y > 0.25, Lower moon: y < 0.25
-    upper = np.sum(generated[:, 1] > 0.25)
-    lower = np.sum(generated[:, 1] <= 0.25)
-    covered = int(upper > 0) + int(lower > 0)
-    return {"mode_coverage": covered / 2,
-            "n_modes_total": 2, "n_modes_covered": covered}
-
-
-def _mode_coverage_spiral(generated: np.ndarray) -> Dict[str, float]:
-    """Spiral — 8 angular sectors × 2 radial bands."""
-    r = np.sqrt(generated[:, 0]**2 + generated[:, 1]**2)
-    theta = np.arctan2(generated[:, 1], generated[:, 0])
-
-    r_bins = np.linspace(0, 3.2, 3)          # 2 radial bands
-    t_bins = np.linspace(-np.pi, np.pi, 9)    # 8 angular sectors
-    n_total = 16
-
-    r_ids = np.clip(np.digitize(r, r_bins) - 1, 0, 1)
-    t_ids = np.clip(np.digitize(theta, t_bins) - 1, 0, 7)
-    cell_ids = r_ids * 8 + t_ids
-    covered = len(np.unique(cell_ids))
-    return {"mode_coverage": covered / n_total,
-            "n_modes_total": n_total, "n_modes_covered": covered}
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  Orchestration
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def compute_all_metrics(real: np.ndarray, generated: np.ndarray,
-                        model, model_type: str,
-                        class_idx: int, class_name: str) -> Dict[str, float]:
-    """Compute the full suite of quality metrics.
-
-    Parameters
-    ----------
-    real, generated : (N, 2) arrays
-    model : trained model instance
-    model_type : "KDE" | "GMM" | "VAE" | "Diffusion"
-    class_idx : 0 … 3
-    class_name : str
-
-    Returns
-    -------
-    dict of metric_name → value
-    """
-    results: Dict[str, float] = {}
-
-    # MMD
-    results["MMD"] = mmd_rbf(real, generated)
-
-    # Wasserstein
-    results["Wasserstein"] = wasserstein_sinkhorn(real, generated)
-
-    # Coverage & Precision
-    cp = coverage_precision(real, generated)
-    results["Precision"] = cp["precision"]
-    results["Coverage"] = cp["coverage"]
-
-    # NLL
-    if model_type == "KDE":
-        results["NLL"] = nll_kde_gmm(model, real[:500])
-    elif model_type == "GMM":
-        results["NLL"] = nll_kde_gmm(model, real[:500])
-    elif model_type == "VAE":
-        results["NLL"] = nll_vae_iwae(model, real[:500], n_iw_samples=50)
-    elif model_type == "Diffusion":
-        # Use training loss as proxy (lower is better)
-        results["NLL"] = model.train_losses[-1] if model.train_losses else float("nan")
-    else:
-        results["NLL"] = float("nan")
-
-    # Mode coverage
-    mc = mode_coverage(real, generated, class_idx, class_name)
-    results["ModeCoverage"] = mc["mode_coverage"]
-
-    return results

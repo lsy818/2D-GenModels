@@ -27,6 +27,8 @@ from pathlib import Path
 
 import numpy as np
 
+from code.config import DATA_DIR, ROOT
+
 
 CLASS_NAMES = ["gaussian_mixture", "ring", "two_moons", "spiral"]
 
@@ -152,9 +154,15 @@ def save_preview(
         plt.close(fig)
 
 
+def _resolve_output_dir(path: Path) -> Path:
+    if path.is_absolute():
+        return path
+    return ROOT / path
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output-dir", type=Path, default=Path("data"))
+    parser.add_argument("--output-dir", type=Path, default=DATA_DIR)
     parser.add_argument("--train-per-class", type=int, default=2000)
     parser.add_argument("--test-per-class", type=int, default=2000)
     parser.add_argument("--hidden-per-class", type=int, default=2000)
@@ -165,18 +173,19 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    args.output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = _resolve_output_dir(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     train, train_label = make_split(args.train_per_class, np.random.default_rng(args.seed))
     test, test_label = make_split(args.test_per_class, np.random.default_rng(args.seed + 1))
     hidden, hidden_label = make_split(args.hidden_per_class, np.random.default_rng(args.seed + 2))
 
-    np.save(args.output_dir / "train.npy", train)
-    np.save(args.output_dir / "test.npy", test)
-    np.save(args.output_dir / "train_label.npy", train_label)
-    np.save(args.output_dir / "test_label.npy", test_label)
-    np.save(args.output_dir / "hidden_test.npy", hidden)
-    np.save(args.output_dir / "hidden_test_label.npy", hidden_label)
+    np.save(output_dir / "train.npy", train)
+    np.save(output_dir / "test.npy", test)
+    np.save(output_dir / "train_label.npy", train_label)
+    np.save(output_dir / "test_label.npy", test_label)
+    np.save(output_dir / "hidden_test.npy", hidden)
+    np.save(output_dir / "hidden_test_label.npy", hidden_label)
 
     metadata = {
         "seed": args.seed,
@@ -187,14 +196,14 @@ def main() -> None:
         "hidden_test_shape": list(hidden.shape),
         "coordinate_range_note": "Samples are designed to lie mostly in [-4, 4] x [-4, 4].",
     }
-    with (args.output_dir / "metadata.json").open("w", encoding="utf-8") as f:
+    with (output_dir / "metadata.json").open("w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2)
         f.write("\n")
 
     if args.plot:
-        save_preview(args.output_dir, train, train_label, test, test_label, hidden, hidden_label)
+        save_preview(output_dir, train, train_label, test, test_label, hidden, hidden_label)
 
-    print(f"Saved dataset to {args.output_dir.resolve()}")
+    print(f"Saved dataset to {output_dir.resolve()}")
     print(f"train: {train.shape}, test: {test.shape}, hidden_test: {hidden.shape}")
 
 

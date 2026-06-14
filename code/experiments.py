@@ -4,7 +4,7 @@ Sections mapped:
   §5  — train_main()          train VAE + DDPM on all 4 classes
   §8.1 — ablation()            β and T sensitivity on Spiral
   §8.2 — conditional()         CVAE + Conditional DDPM on joint data
-  §8.3 — robustness()          uniform noise contamination on Spiral
+  §8.3 — robustness()          three contamination mechanisms on Spiral
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from code.config import (
     VAEConfig, DiffusionConfig,
 )
 from code.data import load_data, get_class
-from code.metrics import compute_all_metrics
+from code.metrics import evaluate_generation_metrics
 
 set_seed(42)
 DEVICE = get_device()
@@ -117,7 +117,7 @@ def ablation() -> Dict:
             beta=beta, device=DEVICE,
         ).fit(spiral, verbose=False)
         gen = m.sample(2000)
-        met = _quick_metrics(spiral_test, gen)
+        met = evaluate_generation_metrics(spiral_test, gen)
         results[f"VAE_β={beta}"] = met
         print(f"  β={beta:.1f}: MMD={met['MMD']:.4f}  Prec={met['Precision']:.3f}  Cov={met['Coverage']:.3f}")
 
@@ -131,7 +131,7 @@ def ablation() -> Dict:
             device=DEVICE,
         ).fit(spiral, verbose=False)
         gen = m.sample(2000)
-        met = _quick_metrics(spiral_test, gen)
+        met = evaluate_generation_metrics(spiral_test, gen)
         results[f"DDPM_T={T_val}"] = met
         print(f"  T={T_val}: MMD={met['MMD']:.4f}  Prec={met['Precision']:.3f}  Cov={met['Coverage']:.3f}")
 
@@ -276,8 +276,8 @@ def conditional() -> Dict:
         real = get_class(test, test_label, c)
         g_cvae = cvae.generate(2000, c, DEVICE)
         g_cddpm = cddpm.sample(2000, c)
-        results["CVAE"][CLASS_NAMES[c]] = _quick_metrics(real, g_cvae)
-        results["CondDDPM"][CLASS_NAMES[c]] = _quick_metrics(real, g_cddpm)
+        results["CVAE"][CLASS_NAMES[c]] = evaluate_generation_metrics(real, g_cvae)
+        results["CondDDPM"][CLASS_NAMES[c]] = evaluate_generation_metrics(real, g_cddpm)
         print(f"  {CLASS_NAMES[c]}: CVAE Cov={results['CVAE'][CLASS_NAMES[c]]['Coverage']:.3f}  "
               f"CondDDPM Cov={results['CondDDPM'][CLASS_NAMES[c]]['Coverage']:.3f}")
     return results
@@ -288,70 +288,95 @@ def conditional() -> Dict:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def robustness() -> Dict:
-    """Uniform noise contamination on Spiral at ρ ∈ {0%, 5%, 10%}."""
+    """Robustness on Spiral under uniform, shifted-cluster, and heteroscedastic noise."""
     from code.models.vae_model import VAEModel
     from code.models.diffusion_model import DiffusionModel
 
     spiral = get_class(train, train_label, 3)
     spiral_test = get_class(test, test_label, 3)
     n_clean = len(spiral)
-    results = {}
+    rhos = [0.0, 0.05, 0.10]
+    contamination_types = ["uniform", "cluster_shift", "heteroscedastic"]
+    results = {kind: {} for kind in contamination_types}
 
     print("\n" + "=" * 60)
     print("§8.3  ROBUSTNESS (Spiral)")
     print("=" * 60)
 
-    for rho in [0.0, 0.05, 0.10]:
-        print(f"\n--- ρ = {rho:.0%} ---")
-        n_noise = int(n_clean * rho)
-        noise_pts = np.random.default_rng(42).uniform(-4, 4, size=(n_noise, 2)).astype(np.float32)
-        corrupted = np.concatenate([spiral, noise_pts])
-        corrupted = corrupted[np.random.default_rng(42).permutation(len(corrupted))]
+    def make_outliers(kind: str, n_noise: int, rng: np.random.Generator) -> np.ndarray:
+        if n_noise == 0:
+            return np.empty((0, 2), dtype=np.float32)
 
-        # VAE
-        vae_cfg = VAEConfig()
-        vae = VAEModel(
-            latent_dim=vae_cfg.latent_dim, hidden_dims=vae_cfg.hidden_dims,
-            lr=vae_cfg.lr, epochs=vae_cfg.epochs, batch_size=vae_cfg.batch_size,
-            beta=vae_cfg.beta, device=DEVICE,
-        ).fit(corrupted, verbose=False)
-        mv = _quick_metrics(spiral_test, vae.sample(2000))
+        if kind == "uniform":
+            return rng.uniform(-4, 4, size=(n_noise, 2)).astype(np.float32)
 
-        # DDPM
-        diff_cfg = DiffusionConfig()
-        diff = DiffusionModel(
-            n_steps=diff_cfg.n_steps, hidden_dim=diff_cfg.hidden_dim,
-            num_layers=diff_cfg.num_layers, lr=diff_cfg.lr, epochs=diff_cfg.epochs,
-            batch_size=diff_cfg.batch_size, device=DEVICE,
-        ).fit(corrupted, verbose=False)
-        md = _quick_metrics(spiral_test, diff.sample(2000))
+        if kind == "cluster_shift":
+            radii = np.linalg.norm(spiral, axis=1)
+            anchor = spiral[np.argsort(radii)[int(0.72 * len(spiral))]]
+            local_idx = np.argsort(np.linalg.norm(spiral - anchor, axis=1))[:320]
+            base = spiral[rng.choice(local_idx, size=n_noise, replace=True)]
+            shift = np.array([1.20, -1.00], dtype=np.float32)
+            jitter = rng.normal(0.0, 0.06, size=(n_noise, 2)).astype(np.float32)
+            return (base + shift + jitter).astype(np.float32)
 
-        results[f"ρ={rho:.0%}"] = {"VAE": mv, "DDPM": md}
-        print(f"    VAE:  MMD={mv['MMD']:.4f}  Prec={mv['Precision']:.3f}  Cov={mv['Coverage']:.3f}")
-        print(f"    DDPM: MMD={md['MMD']:.4f}  Prec={md['Precision']:.3f}  Cov={md['Coverage']:.3f}")
+        if kind == "heteroscedastic":
+            base = spiral[rng.choice(n_clean, size=n_noise, replace=False)]
+            radius = np.linalg.norm(base, axis=1)
+            radius_norm = (radius - radius.min()) / (np.ptp(radius) + 1e-8)
+            radial = base / (radius[:, None] + 1e-8)
+            tangent = np.column_stack([-radial[:, 1], radial[:, 0]])
+            sigma = 0.04 + 0.22 * radius_norm
+            radial_noise = rng.normal(0.0, sigma)[:, None] * radial
+            tangent_noise = rng.normal(0.0, 0.35 * sigma)[:, None] * tangent
+            return (base + radial_noise + tangent_noise).astype(np.float32)
+
+        raise ValueError(f"Unknown contamination type: {kind}")
+
+    baseline = None
+    for kind_idx, kind in enumerate(contamination_types):
+        print(f"\n--- contamination = {kind} ---")
+        for rho in rhos:
+            key = f"rho={rho:.0%}"
+            if rho == 0.0 and baseline is not None:
+                results[kind][key] = baseline
+                print(f"  {key}: reuse clean baseline")
+                continue
+
+            print(f"  {key}")
+            n_noise = int(n_clean * rho)
+            rng = np.random.default_rng(4200 + kind_idx * 100 + int(rho * 1000))
+            noise_pts = make_outliers(kind, n_noise, rng)
+            corrupted = np.concatenate([spiral, noise_pts])
+            corrupted = corrupted[rng.permutation(len(corrupted))]
+
+            # VAE
+            set_seed(4300 + kind_idx * 100 + int(rho * 1000))
+            vae_cfg = VAEConfig()
+            vae = VAEModel(
+                latent_dim=vae_cfg.latent_dim, hidden_dims=vae_cfg.hidden_dims,
+                lr=vae_cfg.lr, epochs=vae_cfg.epochs, batch_size=vae_cfg.batch_size,
+                beta=vae_cfg.beta, device=DEVICE,
+            ).fit(corrupted, verbose=False)
+            mv = evaluate_generation_metrics(spiral_test, vae.sample(2000))
+
+            # DDPM
+            set_seed(4350 + kind_idx * 100 + int(rho * 1000))
+            diff_cfg = DiffusionConfig()
+            diff = DiffusionModel(
+                n_steps=diff_cfg.n_steps, hidden_dim=diff_cfg.hidden_dim,
+                num_layers=diff_cfg.num_layers, lr=diff_cfg.lr, epochs=diff_cfg.epochs,
+                batch_size=diff_cfg.batch_size, device=DEVICE,
+            ).fit(corrupted, verbose=False)
+            md = evaluate_generation_metrics(spiral_test, diff.sample(2000))
+
+            case_result = {"VAE": mv, "DDPM": md}
+            results[kind][key] = case_result
+            if rho == 0.0:
+                baseline = case_result
+            print(f"    VAE:  MMD={mv['MMD']:.4f}  Wass={mv['Wasserstein']:.3f}  "
+                  f"Prec={mv['Precision']:.3f}  Cov={mv['Coverage']:.3f}")
+            print(f"    DDPM: MMD={md['MMD']:.4f}  Wass={md['Wasserstein']:.3f}  "
+                  f"Prec={md['Precision']:.3f}  Cov={md['Coverage']:.3f}")
 
     return results
 
-
-# ── Fast metrics for extension experiments ────────────────────────────────────
-
-def _quick_metrics(real, gen, n=500) -> Dict:
-    from scipy.spatial import cKDTree, distance
-    rng = np.random.default_rng(42)
-    X = real[rng.choice(len(real), min(len(real), n), replace=False)]
-    Y = gen[rng.choice(len(gen), min(len(gen), n), replace=False)]
-
-    # MMD
-    pooled = np.concatenate([X, Y])
-    ds = distance.cdist(pooled[:200], pooled[:200])
-    sigma = float(np.median(ds[ds > 0])) if ds[ds > 0].size else 1.0
-    sigma = max(sigma, 1e-3); g = 0.5 / (sigma * sigma)
-    def rbf(A, B): return float(np.mean(np.exp(-g * distance.cdist(A, B, "sqeuclidean"))))
-    mmd = max(np.sqrt(rbf(X, X) + rbf(Y, Y) - 2 * rbf(X, Y)), 0.0)
-
-    # Precision & Coverage
-    tr = cKDTree(X); r_k, _ = tr.query(X, k=6); radii = r_k[:, 5]
-    dg, _ = tr.query(Y, k=1); prec = float(np.mean(dg <= np.percentile(radii, 95)))
-    ty = cKDTree(Y); dr, _ = ty.query(X, k=1); cov = float(np.mean(dr <= radii))
-
-    return {"MMD": mmd, "Precision": prec, "Coverage": cov}

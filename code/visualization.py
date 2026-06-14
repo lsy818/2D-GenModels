@@ -1,12 +1,12 @@
-"""Redesigned visualisations for report/main.tex.
+"""Visualisation utilities for the 2D generative-model experiments.
 
-This script writes the exact filenames used by the LaTeX report.  The design
-goal is to keep each figure readable in an A4 paper: fewer panels, consistent
+The design goal is to keep each figure readable: fewer panels, consistent
 styling, and more density/contour summaries instead of large scatter grids.
 """
 
 from __future__ import annotations
 
+import json
 import sys
 import warnings
 from pathlib import Path
@@ -32,7 +32,7 @@ sys.path.insert(0, str(ROOT))
 if "code" in sys.modules and not hasattr(sys.modules["code"], "__path__"):
     del sys.modules["code"]
 
-from code.config import CLASS_COLORS, CLASS_NAMES, FIGURES_DIR, MODEL_DIR, N_CLASSES, set_seed
+from code.config import CLASS_COLORS, CLASS_NAMES, FIGURES_DIR, MODEL_DIR, N_CLASSES, OUTPUT_DIR, set_seed
 from code.data import (
     effective_dims,
     get_class,
@@ -61,75 +61,13 @@ MODEL_COLORS = {
 
 SHORT_NAMES = ["GMM", "Ring", "Moons", "Spiral"]
 
-RESULTS = {
-    "Gaussian Mixture": {
-        "VAE": {"MMD": 0.0033, "Wasserstein": 0.132, "Coverage": 0.552, "Precision": 0.475, "Score": 0.413},
-        "DDPM": {"MMD": 0.0040, "Wasserstein": 0.151, "Coverage": 0.963, "Precision": 0.966, "Score": 0.607},
-    },
-    "Ring": {
-        "VAE": {"MMD": 0.0047, "Wasserstein": 0.116, "Coverage": 0.664, "Precision": 0.806, "Score": 0.250},
-        "DDPM": {"MMD": 0.0002, "Wasserstein": 0.095, "Coverage": 0.972, "Precision": 0.992, "Score": 0.851},
-    },
-    "Two Moons": {
-        "VAE": {"MMD": 0.0141, "Wasserstein": 0.111, "Coverage": 0.176, "Precision": 0.536, "Score": 0.131},
-        "DDPM": {"MMD": 0.0010, "Wasserstein": 0.087, "Coverage": 0.968, "Precision": 0.966, "Score": 0.799},
-    },
-    "Spiral": {
-        "VAE": {"MMD": 0.0098, "Wasserstein": 0.115, "Coverage": 0.777, "Precision": 0.976, "Score": 0.486},
-        "DDPM": {"MMD": 0.0043, "Wasserstein": 0.104, "Coverage": 0.847, "Precision": 0.976, "Score": 0.670},
-    },
-}
+SCORE_METRICS = ["MMD", "Wasserstein", "Coverage", "Precision"]
+LOWER_IS_BETTER = {"MMD", "Wasserstein"}
 
-ABLATION_RESULTS = {
-    "VAE": {
-        "param": [0.1, 1.0, 5.0],
-        "label": [r"$\beta=0.1$", r"$\beta=1.0$", r"$\beta=5.0$"],
-        "MMD": [0.0462, 0.0942, 0.3243],
-        "Precision": [0.962, 0.996, 1.000],
-        "Coverage": [0.856, 0.834, 0.040],
-    },
-    "DDPM": {
-        "param": [100, 1000],
-        "label": [r"$T=100$", r"$T=1000$"],
-        "MMD": [0.0625, 0.0571],
-        "Precision": [1.000, 1.000],
-        "Coverage": [0.906, 0.904],
-    },
-}
-
-CONDITIONAL_RESULTS = {
-    "Gaussian Mixture": {
-        "CVAE": {"MMD": 0.0794, "Precision": 0.522, "Coverage": 0.630},
-        "CondDDPM": {"MMD": 0.0369, "Precision": 0.966, "Coverage": 0.956},
-    },
-    "Ring": {
-        "CVAE": {"MMD": 0.0616, "Precision": 0.844, "Coverage": 0.726},
-        "CondDDPM": {"MMD": 0.0352, "Precision": 0.992, "Coverage": 0.980},
-    },
-    "Two Moons": {
-        "CVAE": {"MMD": 0.1182, "Precision": 0.648, "Coverage": 0.196},
-        "CondDDPM": {"MMD": 0.0580, "Precision": 0.982, "Coverage": 0.930},
-    },
-    "Spiral": {
-        "CVAE": {"MMD": 0.0848, "Precision": 1.000, "Coverage": 0.786},
-        "CondDDPM": {"MMD": 0.0632, "Precision": 1.000, "Coverage": 0.864},
-    },
-}
-
-ROBUSTNESS_RESULTS = {
-    0: {
-        "VAE": {"MMD": 0.0913, "Precision": 0.998, "Coverage": 0.862},
-        "DDPM": {"MMD": 0.0556, "Precision": 0.996, "Coverage": 0.884},
-    },
-    5: {
-        "VAE": {"MMD": 0.0711, "Precision": 0.986, "Coverage": 0.838},
-        "DDPM": {"MMD": 0.0799, "Precision": 0.936, "Coverage": 0.842},
-    },
-    10: {
-        "VAE": {"MMD": 0.0388, "Precision": 0.974, "Coverage": 0.856},
-        "DDPM": {"MMD": 0.0931, "Precision": 0.912, "Coverage": 0.810},
-    },
-}
+MAIN_RESULTS_PATH = OUTPUT_DIR / "main_results.json"
+CONDITIONAL_RESULTS_PATH = OUTPUT_DIR / "conditional_results_with_wasserstein.json"
+ROBUSTNESS_RESULTS_PATH = OUTPUT_DIR / "robustness_extended_results.json"
+EXTENSION_RESULTS_PATH = OUTPUT_DIR / "extension_results.json"
 
 
 def _set_style() -> None:
@@ -151,11 +89,119 @@ def _set_style() -> None:
     )
 
 
-def _save(fig: plt.Figure, base: Path, dpi: int = 260) -> None:
+def _save(fig: plt.Figure, base: Path) -> None:
     base.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(base.with_suffix(".pdf"), bbox_inches="tight")
-    fig.savefig(base.with_suffix(".png"), dpi=dpi, bbox_inches="tight")
     plt.close(fig)
+
+
+def _load_json(path: Path) -> dict:
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Missing result file: {path}. Run the relevant experiment before regenerating figures."
+        )
+    with path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _metric_values(values: dict, metrics: list[str] = SCORE_METRICS) -> dict[str, float]:
+    missing = [metric for metric in metrics if metric not in values]
+    if missing:
+        raise KeyError(f"Missing metrics {missing} in result row: {values}")
+    return {metric: float(values[metric]) for metric in metrics}
+
+
+def _score_rows(rows: list[tuple], raw: np.ndarray, metrics: list[str] = SCORE_METRICS) -> dict[tuple, float]:
+    quality = np.zeros_like(raw, dtype=float)
+    for j, metric in enumerate(metrics):
+        col = raw[:, j]
+        lo, hi = float(col.min()), float(col.max())
+        if hi - lo < 1e-12:
+            quality[:, j] = 0.5
+        elif metric in LOWER_IS_BETTER:
+            quality[:, j] = (hi - col) / (hi - lo)
+        else:
+            quality[:, j] = (col - lo) / (hi - lo)
+    return {row: float(np.mean(quality[i])) for i, row in enumerate(rows)}
+
+
+def _add_distribution_scores(
+    table: dict[str, dict[str, dict[str, float]]],
+    models: list[str],
+) -> dict[str, dict[str, dict[str, float]]]:
+    rows = [(cls, model) for cls in CLASS_NAMES for model in models]
+    raw = np.asarray([[table[cls][model][metric] for metric in SCORE_METRICS] for cls, model in rows], dtype=float)
+    scores = _score_rows(rows, raw)
+
+    scored: dict[str, dict[str, dict[str, float]]] = {}
+    for cls in CLASS_NAMES:
+        scored[cls] = {}
+        for model in models:
+            scored[cls][model] = dict(table[cls][model])
+            scored[cls][model]["Score"] = scores[(cls, model)]
+    return scored
+
+
+def load_main_results(path: Path = MAIN_RESULTS_PATH) -> dict[str, dict[str, dict[str, float]]]:
+    data = _load_json(path)
+    table = {
+        cls: {
+            model: _metric_values(data[cls][model])
+            for model in ["VAE", "DDPM"]
+        }
+        for cls in CLASS_NAMES
+    }
+    return _add_distribution_scores(table, ["VAE", "DDPM"])
+
+
+def load_conditional_results(path: Path = CONDITIONAL_RESULTS_PATH) -> dict[str, dict[str, dict[str, float]]]:
+    if path.exists():
+        data = _load_json(path)
+    else:
+        data = _load_json(EXTENSION_RESULTS_PATH)["conditional"]
+
+    if all(cls in data for cls in CLASS_NAMES):
+        table = {
+            cls: {
+                model: _metric_values(data[cls][model])
+                for model in ["CVAE", "CondDDPM"]
+            }
+            for cls in CLASS_NAMES
+        }
+    else:
+        table = {
+            cls: {
+                model: _metric_values(data[model][cls])
+                for model in ["CVAE", "CondDDPM"]
+            }
+            for cls in CLASS_NAMES
+        }
+    return _add_distribution_scores(table, ["CVAE", "CondDDPM"])
+
+
+def _parse_rho_key(key: str) -> int:
+    digits = "".join(ch for ch in key if ch.isdigit())
+    if not digits:
+        raise ValueError(f"Cannot parse contamination ratio from key: {key}")
+    return int(digits)
+
+
+def load_robustness_results(path: Path = ROBUSTNESS_RESULTS_PATH) -> dict[str, dict[int, dict[str, dict[str, float]]]]:
+    if path.exists():
+        data = _load_json(path)
+    else:
+        data = _load_json(EXTENSION_RESULTS_PATH)["robustness"]
+
+    table: dict[str, dict[int, dict[str, dict[str, float]]]] = {}
+    for kind, kind_rows in data.items():
+        table[kind] = {}
+        for rho_key, model_rows in kind_rows.items():
+            rho = _parse_rho_key(str(rho_key))
+            table[kind][rho] = {
+                model: _metric_values(model_rows[model])
+                for model in ["VAE", "DDPM"]
+            }
+    return table
 
 
 def _format_xy(ax: plt.Axes, lim: tuple[float, float] = (-4, 4), ticks: bool = True) -> None:
@@ -413,20 +459,20 @@ def figure_polar_analysis(train: np.ndarray, train_label: np.ndarray) -> None:
 
 def figure_summary_radar(train: np.ndarray, train_label: np.ndarray) -> None:
     metrics = {
-        "Noise": [],
-        "Thickness": [],
-        "Curvature": [],
-        "Nonlinear": [],
-        "Spread": [],
+        "Local\nnoise": [],
+        "Manifold\nthickness": [],
+        "Local\ncurvature": [],
+        "PCA\nnonlinearity": [],
+        "Spatial\nspread": [],
     }
     for c in range(N_CLASSES):
         pts = get_class(train, train_label, c)
-        metrics["Noise"].append(local_noise(pts, 30).mean())
-        metrics["Thickness"].append(manifold_thickness(pts, 20).mean())
-        metrics["Curvature"].append(local_curvature(pts, 15).mean())
+        metrics["Local\nnoise"].append(local_noise(pts, 30).mean())
+        metrics["Manifold\nthickness"].append(manifold_thickness(pts, 20).mean())
+        metrics["Local\ncurvature"].append(local_curvature(pts, 15).mean())
         pca = PCA().fit(pts)
-        metrics["Nonlinear"].append(1.0 - abs(float(pca.explained_variance_ratio_[0]) - 0.5) * 2)
-        metrics["Spread"].append(np.mean(spatial.distance.pdist(_subsample(pts, 700))))
+        metrics["PCA\nnonlinearity"].append(1.0 - abs(float(pca.explained_variance_ratio_[0]) - 0.5) * 2)
+        metrics["Spatial\nspread"].append(np.mean(spatial.distance.pdist(_subsample(pts, 700))))
 
     keys = list(metrics)
     values = np.asarray([metrics[k] for k in keys], dtype=float)
@@ -435,19 +481,30 @@ def figure_summary_radar(train: np.ndarray, train_label: np.ndarray) -> None:
     angles = np.linspace(0, 2 * np.pi, len(keys), endpoint=False)
     angles = np.concatenate([angles, angles[:1]])
 
-    fig, ax = plt.subplots(figsize=(4.8, 4.8), subplot_kw={"polar": True}, constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(5.6, 5.4), subplot_kw={"polar": True}, constrained_layout=True)
     for c in range(N_CLASSES):
         vals = np.concatenate([norm[:, c], norm[:1, c]])
-        ax.plot(angles, vals, lw=1.8, marker="o", ms=3.5, color=CLASS_COLORS[c], label=SHORT_NAMES[c])
-        ax.fill(angles, vals, color=CLASS_COLORS[c], alpha=0.07)
+        ax.plot(
+            angles,
+            vals,
+            lw=2.0,
+            marker="o",
+            ms=4.5,
+            markeredgecolor="white",
+            markeredgewidth=0.7,
+            color=CLASS_COLORS[c],
+            label=SHORT_NAMES[c],
+        )
+        ax.fill(angles, vals, color=CLASS_COLORS[c], alpha=0.055)
     ax.set_xticks(angles[:-1])
-    ax.set_xticklabels(keys)
+    ax.set_xticklabels(keys, fontsize=8.5)
     ax.set_yticks([0.25, 0.50, 0.75, 1.00])
-    ax.set_yticklabels([])
+    ax.set_yticklabels(["0.25", "0.50", "0.75", "1.00"], fontsize=7, color="#6b7280")
+    ax.set_ylim(0, 1.05)
     ax.grid(color="#d9dde6", lw=0.7)
     ax.spines["polar"].set_color("#cfd5df")
-    ax.set_title("Geometry difficulty portrait", weight="bold", pad=14)
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.06), ncol=4, frameon=False)
+    ax.set_title("Geometry difficulty portrait\n(relative, min-max normalized)", weight="bold", pad=16)
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.10), ncol=4, frameon=False)
     _save(fig, ANALYSIS_DIR / "summary_radar")
 
 
@@ -484,6 +541,86 @@ def figure_generation_comparison(
     ]
     fig.legend(handles=handles, loc="upper center", ncol=3, frameon=False, bbox_to_anchor=(0.5, 1.03))
     _save(fig, GEN_DIR / "generation_comparison")
+
+
+def figure_main_generation_grid(
+    train: np.ndarray,
+    train_label: np.ndarray,
+    samples: dict[str, dict[int, np.ndarray]],
+) -> None:
+    """Full scatter grid for the appendix: Data, VAE, and DDPM on all classes."""
+    fig, axes = plt.subplots(N_CLASSES, 3, figsize=(7.4, 9.0), constrained_layout=True)
+    columns = ["Data", "VAE", "DDPM"]
+
+    for c in range(N_CLASSES):
+        real = get_class(train, train_label, c)
+        panels = {
+            "Data": _subsample(real, 1200),
+            "VAE": _subsample(samples["VAE"][c], 1200),
+            "DDPM": _subsample(samples["DDPM"][c], 1200),
+        }
+        for j, column in enumerate(columns):
+            ax = axes[c, j]
+            color = MODEL_COLORS["Real"] if column == "Data" else MODEL_COLORS[column]
+            pts = panels[column]
+            ax.scatter(pts[:, 0], pts[:, 1], s=4.2, c=color, alpha=0.55, linewidths=0, rasterized=True)
+            _format_xy(ax, ticks=c == N_CLASSES - 1)
+            if c == 0:
+                ax.set_title(column, weight="bold")
+            if j == 0:
+                ax.set_ylabel(SHORT_NAMES[c], rotation=0, labelpad=20, va="center", weight="bold")
+
+    _save(fig, GEN_DIR / "main_generation_grid")
+
+
+def _sample_spiral_coordinate_ddpm(train: np.ndarray, train_label: np.ndarray, n: int) -> np.ndarray:
+    """Sample the enhanced Spiral generator used in the appendix best-of figure."""
+    coord_path = MODEL_DIR / "extensions" / "spiral_coord_ddpm_T100.pt"
+    if not coord_path.exists():
+        raise FileNotFoundError(
+            f"Missing {coord_path}. Run `python -m code.extensions.spiral_structure_enhancement` first."
+        )
+
+    from code.extensions.diffusion_spiral_experiments import SpiralDDPM
+    from code.extensions.spiral_structure_enhancement import fit_spiral
+
+    rng = np.random.default_rng(4242)
+    spiral_train = get_class(train, train_label, 3)
+    fit = fit_spiral(spiral_train)
+    coord_model = SpiralDDPM.load(coord_path)
+    coords, _ = coord_model.sample(n, seed=4242)
+    return fit.ddpm_coords_to_xy(coords, rng)
+
+
+def figure_optimized_generation_grid(
+    train: np.ndarray,
+    train_label: np.ndarray,
+    samples: dict[str, dict[int, np.ndarray]],
+) -> None:
+    """Appendix best-of figure after analysis and extension experiments."""
+    rng = np.random.default_rng(2026)
+    best_samples = {
+        0: samples["DDPM"][0],
+        1: samples["DDPM"][1],
+        2: samples["DDPM"][2],
+        3: _sample_spiral_coordinate_ddpm(train, train_label, 2000),
+    }
+    fig, axes = plt.subplots(N_CLASSES, 2, figsize=(6.8, 8.0), constrained_layout=True)
+    axes[0, 0].set_title("Data", weight="bold")
+    axes[0, 1].set_title("Optimized", weight="bold")
+
+    for c in range(N_CLASSES):
+        real = _subsample(get_class(train, train_label, c), 1200)
+        gen = _subsample(best_samples[c], 1200)
+        panels = [(real, "#30343b"), (gen, CLASS_COLORS[c])]
+        for j, (pts, color) in enumerate(panels):
+            ax = axes[c, j]
+            ax.scatter(pts[:, 0], pts[:, 1], s=4.2, c=color, alpha=0.55, linewidths=0, rasterized=True)
+            _format_xy(ax, ticks=c == N_CLASSES - 1)
+            if j == 0:
+                ax.set_ylabel(SHORT_NAMES[c], rotation=0, labelpad=21, va="center", weight="bold")
+
+    _save(fig, GEN_DIR / "optimized_generation_grid")
 
 
 def figure_diffusion_process(train: np.ndarray, train_label: np.ndarray, model: DiffusionModel) -> None:
@@ -556,58 +693,7 @@ def figure_training_curves(models: dict[str, dict[int, object]]) -> None:
     _save(fig, GEN_DIR / "training_curves")
 
 
-def _metric_arrays() -> tuple[np.ndarray, list[str], list[str], np.ndarray]:
-    metrics = ["MMD", "Wasserstein", "Coverage", "Precision", "Score"]
-    rows = []
-    row_labels = []
-    raw = []
-    for cls in CLASS_NAMES:
-        for model in ["VAE", "DDPM"]:
-            row_labels.append(f"{SHORT_NAMES[CLASS_NAMES.index(cls)]} / {model}")
-            raw.append([RESULTS[cls][model][m] for m in metrics])
-    raw_arr = np.asarray(raw, dtype=float)
-    good = np.zeros_like(raw_arr)
-    for j, m in enumerate(metrics):
-        col = raw_arr[:, j]
-        lo, hi = col.min(), col.max()
-        if hi - lo < 1e-12:
-            good[:, j] = 0.5
-        elif m in {"MMD", "Wasserstein"}:
-            good[:, j] = (hi - col) / (hi - lo)
-        else:
-            good[:, j] = (col - lo) / (hi - lo)
-    return good, row_labels, metrics, raw_arr
-
-
-def figure_metrics_heatmap() -> None:
-    good, row_labels, metrics, raw = _metric_arrays()
-    annot = np.empty(raw.shape, dtype=object)
-    for i in range(raw.shape[0]):
-        for j in range(raw.shape[1]):
-            annot[i, j] = f"{raw[i, j]:.4f}" if metrics[j] == "MMD" else f"{raw[i, j]:.3f}"
-
-    fig, ax = plt.subplots(figsize=(7.2, 4.7), constrained_layout=True)
-    sns.heatmap(
-        good,
-        ax=ax,
-        annot=annot,
-        fmt="",
-        cmap="YlGnBu",
-        vmin=0,
-        vmax=1,
-        linewidths=0.55,
-        linecolor="white",
-        cbar_kws={"label": "normalised quality"},
-    )
-    ax.set_xticklabels(["MMD↓", "Wass.↓", "Coverage↑", "Precision↑", "Score↑"], rotation=0)
-    ax.set_yticklabels(row_labels, rotation=0)
-    ax.set_title("Metric matrix: raw value, colour = normalised quality", weight="bold")
-    for y in [2, 4, 6]:
-        ax.hlines(y, *ax.get_xlim(), colors="#2f343b", lw=1.0)
-    _save(fig, EVAL_DIR / "metrics_heatmap")
-
-
-def figure_metrics_bars() -> None:
+def figure_metrics_bars(results: dict[str, dict[str, dict[str, float]]]) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(7.4, 3.5), constrained_layout=True)
 
     ax = axes[0]
@@ -621,8 +707,8 @@ def figure_metrics_bars() -> None:
         "Spiral": (0.015, 0.006),
     }
     for c, cls in enumerate(CLASS_NAMES):
-        v = RESULTS[cls]["VAE"]
-        d = RESULTS[cls]["DDPM"]
+        v = results[cls]["VAE"]
+        d = results[cls]["DDPM"]
         ax.scatter(v["Coverage"], v["Precision"], s=44, facecolors="white", edgecolors=MODEL_COLORS["VAE"], lw=1.5, zorder=3)
         ax.scatter(d["Coverage"], d["Precision"], s=48, color=MODEL_COLORS["DDPM"], edgecolors="white", lw=0.5, zorder=4)
         ax.annotate(
@@ -652,13 +738,12 @@ def figure_metrics_bars() -> None:
     ax.set_title("Composite score by distribution", weight="bold")
     x = np.arange(N_CLASSES)
     width = 0.34
-    vae_scores = [RESULTS[cls]["VAE"]["Score"] for cls in CLASS_NAMES]
-    ddpm_scores = [RESULTS[cls]["DDPM"]["Score"] for cls in CLASS_NAMES]
+    vae_scores = [results[cls]["VAE"]["Score"] for cls in CLASS_NAMES]
+    ddpm_scores = [results[cls]["DDPM"]["Score"] for cls in CLASS_NAMES]
     ax.bar(x - width / 2, vae_scores, width, color=MODEL_COLORS["VAE"], alpha=0.86, label="VAE")
     ax.bar(x + width / 2, ddpm_scores, width, color=MODEL_COLORS["DDPM"], alpha=0.90, label="DDPM")
     for i, (v, d) in enumerate(zip(vae_scores, ddpm_scores)):
-        ax.plot([i - width / 2, i + width / 2], [v, d], color="#5d6470", lw=0.8, alpha=0.7)
-        ax.text(i, max(v, d) + 0.035, f"+{d - v:.2f}", ha="center", fontsize=7, color="#333")
+        ax.text(i, max(v, d) + 0.035, f"{d - v:+.2f}", ha="center", fontsize=7, color="#333")
     ax.set_xticks(x)
     ax.set_xticklabels(SHORT_NAMES)
     ax.set_ylim(0, 0.95)
@@ -670,135 +755,124 @@ def figure_metrics_bars() -> None:
     _save(fig, EVAL_DIR / "metrics_bars")
 
 
-def figure_ablation_sensitivity() -> None:
-    fig, axes = plt.subplots(1, 2, figsize=(7.4, 3.35), constrained_layout=True)
+def figure_conditional_metrics(results: dict[str, dict[str, dict[str, float]]]) -> None:
+    fig, axes = plt.subplots(1, 2, figsize=(7.4, 3.5), constrained_layout=True)
 
-    for ax, model_name in zip(axes, ["VAE", "DDPM"]):
-        data = ABLATION_RESULTS[model_name]
-        x = np.arange(len(data["label"]))
-        ax.bar(x, data["MMD"], width=0.48, color="#c8d7eb", edgecolor="white", label="MMD")
-        ax.set_ylabel("MMD", color="#476582")
-        ax.tick_params(axis="y", labelcolor="#476582")
-        ax.set_xticks(x)
-        ax.set_xticklabels(data["label"])
-        ax.grid(axis="y", color="#e7eaf0", lw=0.6)
-        sns.despine(ax=ax, right=False)
-
-        ax2 = ax.twinx()
-        ax2.plot(x, data["Coverage"], marker="o", color="#4daf4a", lw=1.8, label="Coverage")
-        ax2.plot(x, data["Precision"], marker="s", color="#d05a2b", lw=1.8, label="Precision")
-        ax2.set_ylim(0, 1.08)
-        ax2.set_ylabel("ratio", color="#40444c")
-        ax2.tick_params(axis="y", labelcolor="#40444c")
-
-        title = r"VAE: KL weight $\beta$" if model_name == "VAE" else r"DDPM: diffusion steps $T$"
-        ax.set_title(title, weight="bold")
-        handles1, labels1 = ax.get_legend_handles_labels()
-        handles2, labels2 = ax2.get_legend_handles_labels()
-        ax2.legend(handles1 + handles2, labels1 + labels2, frameon=False, loc="center right")
-
-    fig.suptitle("Hyperparameter sensitivity on Spiral", weight="bold", y=1.03)
-    _save(fig, EVAL_DIR / "ablation_sensitivity")
-
-
-def figure_conditional_metrics() -> None:
-    metrics = ["MMD", "Precision", "Coverage"]
-    rows = []
-    row_labels = []
-    raw = []
-    for cls in CLASS_NAMES:
-        for model in ["CVAE", "CondDDPM"]:
-            rows.append((cls, model))
-            row_labels.append(f"{SHORT_NAMES[CLASS_NAMES.index(cls)]} / {model}")
-            raw.append([CONDITIONAL_RESULTS[cls][model][m] for m in metrics])
-
-    raw_arr = np.asarray(raw, dtype=float)
-    quality = np.zeros_like(raw_arr)
-    for j, metric in enumerate(metrics):
-        col = raw_arr[:, j]
-        lo, hi = col.min(), col.max()
-        if hi - lo < 1e-12:
-            quality[:, j] = 0.5
-        elif metric == "MMD":
-            quality[:, j] = (hi - col) / (hi - lo)
-        else:
-            quality[:, j] = (col - lo) / (hi - lo)
-
-    annot = np.empty(raw_arr.shape, dtype=object)
-    for i in range(raw_arr.shape[0]):
-        for j, metric in enumerate(metrics):
-            annot[i, j] = f"{raw_arr[i, j]:.4f}" if metric == "MMD" else f"{raw_arr[i, j]:.3f}"
-
-    fig = plt.figure(figsize=(7.4, 4.2), constrained_layout=True)
-    gs = fig.add_gridspec(1, 2, width_ratios=[1.08, 1.0])
-    ax0 = fig.add_subplot(gs[0, 0])
-    sns.heatmap(
-        quality,
-        ax=ax0,
-        annot=annot,
-        fmt="",
-        cmap="YlGnBu",
-        vmin=0,
-        vmax=1,
-        linewidths=0.55,
-        linecolor="white",
-        cbar=False,
+    ax = axes[0]
+    ax.set_title("Precision-Coverage plane", weight="bold")
+    ax.axhspan(0.9, 1.02, color="#edf7ee", alpha=0.65)
+    ax.axvspan(0.9, 1.02, color="#edf7ee", alpha=0.45)
+    label_offsets = {
+        "Gaussian Mixture": (0.010, -0.030),
+        "Ring": (0.010, 0.012),
+        "Two Moons": (0.010, -0.010),
+        "Spiral": (0.015, 0.006),
+    }
+    for c, cls in enumerate(CLASS_NAMES):
+        v = results[cls]["CVAE"]
+        d = results[cls]["CondDDPM"]
+        ax.scatter(v["Coverage"], v["Precision"], s=44, facecolors="white", edgecolors=MODEL_COLORS["VAE"], lw=1.5, zorder=3)
+        ax.scatter(d["Coverage"], d["Precision"], s=48, color=MODEL_COLORS["DDPM"], edgecolors="white", lw=0.5, zorder=4)
+        ax.annotate(
+            "",
+            xy=(d["Coverage"], d["Precision"]),
+            xytext=(v["Coverage"], v["Precision"]),
+            arrowprops=dict(arrowstyle="->", color=CLASS_COLORS[c], lw=1.0, alpha=0.75),
+        )
+        dx, dy = label_offsets[cls]
+        ax.text(d["Coverage"] + dx, d["Precision"] + dy, SHORT_NAMES[c], color=CLASS_COLORS[c], fontsize=7)
+    ax.set_xlim(0, 1.08)
+    ax.set_ylim(0.42, 1.06)
+    ax.set_xlabel("Coverage")
+    ax.set_ylabel("Precision")
+    ax.grid(color="#e7eaf0", lw=0.6)
+    ax.legend(
+        handles=[
+            Line2D([0], [0], marker="o", color="none", markerfacecolor="white", markeredgecolor=MODEL_COLORS["VAE"], label="CVAE", markersize=6),
+            Line2D([0], [0], marker="o", color="none", markerfacecolor=MODEL_COLORS["DDPM"], markeredgecolor="white", label="Conditional DDPM", markersize=6),
+        ],
+        frameon=False,
+        loc="lower right",
     )
-    ax0.set_xticklabels(["MMD↓", "Precision↑", "Coverage↑"], rotation=0)
-    ax0.set_yticklabels(row_labels, rotation=0)
-    ax0.set_title("conditional generation quality", weight="bold")
-    for y in [2, 4, 6]:
-        ax0.hlines(y, *ax0.get_xlim(), colors="#2f343b", lw=0.9)
+    sns.despine(ax=ax)
 
-    ax1 = fig.add_subplot(gs[0, 1])
+    ax = axes[1]
+    ax.set_title("Composite score by distribution", weight="bold")
     x = np.arange(N_CLASSES)
     width = 0.34
-    cvae_cov = [CONDITIONAL_RESULTS[cls]["CVAE"]["Coverage"] for cls in CLASS_NAMES]
-    ddpm_cov = [CONDITIONAL_RESULTS[cls]["CondDDPM"]["Coverage"] for cls in CLASS_NAMES]
-    ax1.bar(x - width / 2, cvae_cov, width, color=MODEL_COLORS["VAE"], alpha=0.84, label="CVAE")
-    ax1.bar(x + width / 2, ddpm_cov, width, color=MODEL_COLORS["DDPM"], alpha=0.90, label="Conditional DDPM")
-    for i, (v, d) in enumerate(zip(cvae_cov, ddpm_cov)):
-        ax1.text(i, max(v, d) + 0.025, f"+{d - v:.2f}", ha="center", fontsize=7, color="#333")
-    ax1.set_xticks(x)
-    ax1.set_xticklabels(SHORT_NAMES)
-    ax1.set_ylim(0, 1.12)
-    ax1.set_ylabel("Coverage")
-    ax1.set_title("coverage gain by conditioning", weight="bold")
-    ax1.grid(axis="y", color="#e7eaf0", lw=0.6)
-    ax1.legend(frameon=False, loc="lower right")
-    sns.despine(ax=ax1)
+    cvae_scores = [results[cls]["CVAE"]["Score"] for cls in CLASS_NAMES]
+    ddpm_scores = [results[cls]["CondDDPM"]["Score"] for cls in CLASS_NAMES]
+    ax.bar(x - width / 2, cvae_scores, width, color=MODEL_COLORS["VAE"], alpha=0.84, label="CVAE")
+    ax.bar(x + width / 2, ddpm_scores, width, color=MODEL_COLORS["DDPM"], alpha=0.90, label="Conditional DDPM")
+    for i, (v, d) in enumerate(zip(cvae_scores, ddpm_scores)):
+        ax.text(i, max(v, d) + 0.025, f"{d - v:+.2f}", ha="center", fontsize=7, color="#333")
+    ax.set_xticks(x)
+    ax.set_xticklabels(SHORT_NAMES)
+    ax.set_ylim(0, 1.05)
+    ax.set_ylabel("score")
+    ax.grid(axis="y", color="#e7eaf0", lw=0.6)
+    ax.legend(frameon=False, loc="upper left")
+    sns.despine(ax=ax)
 
     _save(fig, EVAL_DIR / "conditional_metrics")
 
 
-def figure_robustness_curves() -> None:
-    rhos = np.array(sorted(ROBUSTNESS_RESULTS))
-    metrics = ["MMD", "Precision", "Coverage"]
-    fig, axes = plt.subplots(1, 3, figsize=(7.5, 2.9), constrained_layout=True)
+def figure_robustness_curves(results: dict[str, dict[int, dict[str, dict[str, float]]]]) -> None:
+    kind_order = ["uniform", "cluster_shift", "heteroscedastic"]
+    kind_titles = {
+        "uniform": "Uniform outliers",
+        "cluster_shift": "Shifted cluster",
+        "heteroscedastic": "Heteroscedastic noise",
+    }
+    rows = [
+        (kind, rho, model)
+        for kind in kind_order
+        for rho in sorted(results[kind])
+        for model in ["VAE", "DDPM"]
+    ]
+    raw = np.asarray(
+        [[results[kind][rho][model][metric] for metric in SCORE_METRICS] for kind, rho, model in rows],
+        dtype=float,
+    )
+    robust_scores = _score_rows(rows, raw)
 
-    for ax, metric in zip(axes, metrics):
+    rhos = np.array(sorted(next(iter(results.values()))))
+    fig, axes = plt.subplots(2, 3, figsize=(7.5, 4.2), constrained_layout=True)
+
+    for col_idx, kind in enumerate(kind_order):
+        ax = axes[0, col_idx]
         for model_name, color in [("VAE", MODEL_COLORS["VAE"]), ("DDPM", MODEL_COLORS["DDPM"])]:
-            vals = [ROBUSTNESS_RESULTS[int(rho)][model_name][metric] for rho in rhos]
+            vals = [robust_scores[(kind, int(rho), model_name)] for rho in rhos]
             ax.plot(rhos, vals, marker="o", lw=1.8, color=color, label=model_name)
-        ax.set_title(metric, weight="bold")
-        ax.set_xlabel("contamination ratio (%)")
-        if metric == "MMD":
-            ax.set_ylabel("value")
-        else:
-            ax.set_ylim(0.78, 1.02)
-            ax.set_ylabel("ratio")
+        ax.set_title(kind_titles[kind], weight="bold")
+        ax.set_ylim(0.25, 0.92)
+        ax.set_ylabel("score" if col_idx == 0 else "")
         ax.set_xticks(rhos)
         ax.grid(color="#e7eaf0", lw=0.6)
         sns.despine(ax=ax)
 
-    axes[0].legend(frameon=False, loc="upper left")
-    fig.suptitle("Robustness under uniform outlier contamination on Spiral", weight="bold", y=1.05)
+        ax = axes[1, col_idx]
+        for model_name, color in [("VAE", MODEL_COLORS["VAE"]), ("DDPM", MODEL_COLORS["DDPM"])]:
+            vals = [results[kind][int(rho)][model_name]["Precision"] for rho in rhos]
+            ax.plot(rhos, vals, marker="o", lw=1.8, color=color, label=model_name)
+        ax.set_ylim(0.89, 1.01)
+        ax.set_xlabel("contamination ratio (%)")
+        ax.set_ylabel("Precision" if col_idx == 0 else "")
+        ax.set_xticks(rhos)
+        ax.grid(color="#e7eaf0", lw=0.6)
+        sns.despine(ax=ax)
+
+    axes[0, 0].legend(frameon=False, loc="lower left")
+    fig.suptitle("Robustness under three contamination mechanisms on Spiral", weight="bold", y=1.02)
     _save(fig, EVAL_DIR / "robustness_curves")
 
 
 def make_all() -> None:
     _set_style()
     train, train_label = load_data("train")
+    main_results = load_main_results()
+    conditional_results = load_conditional_results()
+    robustness_results = load_robustness_results()
 
     print("Generating analysis figures...")
     figure_comparison_overview(train, train_label)
@@ -821,15 +895,15 @@ def make_all() -> None:
 
     print("Generating generation figures...")
     figure_generation_comparison(train, train_label, samples)
+    figure_main_generation_grid(train, train_label, samples)
+    figure_optimized_generation_grid(train, train_label, samples)
     figure_diffusion_process(train, train_label, models["DDPM"][1])
     figure_training_curves(models)
 
     print("Generating evaluation figures...")
-    figure_metrics_heatmap()
-    figure_metrics_bars()
-    figure_ablation_sensitivity()
-    figure_conditional_metrics()
-    figure_robustness_curves()
+    figure_metrics_bars(main_results)
+    figure_conditional_metrics(conditional_results)
+    figure_robustness_curves(robustness_results)
 
     print(f"Done. Figures saved under {FIGURES_DIR.resolve()}")
 
