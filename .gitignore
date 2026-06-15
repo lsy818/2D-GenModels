@@ -1,11 +1,28 @@
-data/
+# Python cache and local environments
 **/__pycache__/
-output/
-models/**/*.pt
-report/*.aux
-report/*.bbl
-report/*.blg
-report/*.log
-report/*.out
-report/*.toc
-report/*.gz
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.venv/
+venv/
+.env
+.env.*
+
+# Generated experiment artifacts
+/data/
+/output/
+/models/
+
+# LaTeX build artifacts
+/report/*.aux
+/report/*.bbl
+/report/*.blg
+/report/*.log
+/report/*.out
+/report/*.toc
+/report/*.gz
+/report/*.synctex*
+/report/*.fls
+/report/*.fdb_latexmk
