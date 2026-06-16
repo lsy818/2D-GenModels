@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>二维复杂分布的生成建模与评价</title>
+<script>
+  MathJax = {
+    tex: { inlineMath: [['$','$'], ['\\(','\\)']] },
+    svg: { fontCache: 'global' },
+    options: { enableMenu: false }
+  };
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" defer></script>
+<style>
+  :root {
+    --blue: #245c8c;
+    --orange: #d6702b;
+    --green: #217a5b;
+    --ink: #17212b;
+    --muted: #5d6b78;
+    --paper: #fff;
+    --bg: #e9eef4;
+    --line: #d9e1ea;
+    --gray: #f5f7fa;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body { height: 100%; }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
+    overflow: hidden;
+  }
+
+  .deck {
+    width: 100vw; height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .slide {
+    width:  min(100vw, 177.78vh);
+    height: min(100vh, 56.25vw);
+    background: var(--paper);
+    overflow: hidden;
+    display: none;
+    grid-template-rows: 64px 1fr 32px;
+  }
+  .slide.active { display: grid; }
+
+  /* ===== Title slide ===== */
+  .title-slide {
+    grid-template-rows: 1fr;
+    place-items: center; text-align: center;
+    background: linear-gradient(135deg, rgba(36,92,140,0.96), rgba(19,53,82,0.98));
+    color: #fff;
+  }
+  .title-slide h1 { font-size: clamp(32px, 3.6vw, 52px); font-weight: 800; line-height: 1.2; }
+  .title-slide .sub { margin-top: 18px; font-size: clamp(18px, 1.8vw, 26px); opacity: 0.88; }
+  .title-slide .meta { margin-top: 52px; font-size: clamp(16px, 1.4vw, 22px); opacity: 0.72; line-height: 1.8; }
+
+  /* ===== Header / Footer ===== */
+  header {
+    background: var(--blue); color: #fff;
+    display: flex; align-items: center;
+    padding: 0 36px;
+    font-size: clamp(20px, 1.7vw, 26px); font-weight: 800;
+  }
+  footer {
+    color: #8a97a4; font-size: 14px;
+    text-align: right; padding: 0 30px 8px;
+    display: flex; align-items: flex-end; justify-content: flex-end;
+  }
+
+  /* ===== Main content area ===== */
+  main {
+    min-height: 0; padding: 20px 36px 10px;
+    display: flex; gap: 24px;
+  }
+  .col { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+  .fit {
+    min-width: 0; min-height: 0;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+  }
+  .fit img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+
+  /* ===== Grid helpers ===== */
+  .g2 { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; min-height: 0; width: 100%; }
+  .g2-60 { grid-template-columns: 58% 1fr; }
+  .g2-55 { grid-template-columns: 53% 1fr; }
+  .g2-44 { grid-template-columns: 44% 1fr; }
+  .g2-40 { grid-template-columns: 40% 1fr; }
+  .gr2 { grid-template-rows: 1fr 1fr; }
+  .stack { display: grid; grid-template-rows: 1fr auto; gap: 14px; min-height: 0; width: 100%; }
+  .stack2 { grid-template-rows: 1fr 1fr; gap: 16px; }
+  .vstack { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+  .vstack-sm { gap: 8px; }
+
+  /* ===== Text ===== */
+  .t { font-size: clamp(14.5px, 1.1vw, 17px); line-height: 1.6; color: var(--muted); font-weight: 500; }
+  .t-sm { font-size: clamp(13px, 0.95vw, 15px); line-height: 1.5; }
+  .t strong { color: var(--blue); font-weight: 800; }
+  .t em { color: var(--orange); font-style: normal; font-weight: 700; }
+  .t p { margin: 0 0 7px; }
+  .t p:last-child { margin-bottom: 0; }
+  .t ul { padding-left: 16px; margin: 4px 0; }
+  .t ul li { margin-bottom: 4px; }
+
+  /* ===== Key bar ===== */
+  .key {
+    border-left: 6px solid var(--orange);
+    background: var(--gray);
+    padding: 11px 16px;
+    border-radius: 0 6px 6px 0;
+    font-size: clamp(16px, 1.25vw, 20px);
+    font-weight: 800;
+    line-height: 1.35;
+  }
+  .key.blue { border-left-color: var(--blue); }
+
+  /* ===== Formula block ===== */
+  .fm {
+    background: var(--gray); border: 1px solid var(--line);
+    border-radius: 6px; padding: 12px 16px;
+    text-align: center;
+    font-size: clamp(15px, 1.25vw, 19px);
+    color: var(--blue); font-weight: 700;
+    line-height: 1.4;
+  }
+  .fm-sm { font-size: clamp(13px, 1vw, 16px); padding: 8px 12px; }
+
+  /* ===== Definition cards ===== */
+  .def {
+    border: 1px solid var(--line); border-left: 5px solid var(--blue);
+    border-radius: 6px; padding: 9px 12px;
+    background: #fff;
+    font-size: clamp(13px, 0.95vw, 15px);
+    line-height: 1.45; color: var(--muted); font-weight: 500;
+  }
+  .def strong { color: var(--blue); font-weight: 800; }
+  .def.orange { border-left-color: var(--orange); }
+  .def.green { border-left-color: var(--green); }
+
+  /* ===== Metrics cards ===== */
+  .mc {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+  }
+  .mc .card {
+    background: var(--gray); border-radius: 6px; padding: 10px 12px;
+    text-align: center; border: 1px solid var(--line);
+  }
+  .mc .card .val {
+    font-size: clamp(22px, 2vw, 30px); font-weight: 900; color: var(--blue);
+  }
+  .mc .card .lbl {
+    font-size: clamp(12px, 0.85vw, 14px); color: var(--muted); font-weight: 600; margin-top: 2px;
+  }
+
+  /* ===== Table ===== */
+  table { border-collapse: collapse; font-size: clamp(12px, 0.85vw, 14px); width: 100%; }
+  table th, table td { padding: 4px 7px; text-align: center; border-bottom: 1px solid var(--line); }
+  table th { background: var(--blue); color: #fff; font-weight: 700; }
+  table tr:last-child td { border-bottom: none; }
+  table .hl { font-weight: 800; color: var(--blue); }
+
+  /* ===== Conclusion ===== */
+  .concl {
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .concl .it {
+    background: var(--gray); border-left: 6px solid var(--blue);
+    border-radius: 0 6px 6px 0; padding: 12px 16px;
+    font-size: clamp(14.5px, 1.1vw, 18px); font-weight: 700; line-height: 1.4;
+  }
+  .concl .it:nth-child(2) { border-left-color: var(--orange); }
+  .concl .it:nth-child(3) { border-left-color: var(--green); }
+
+  /* ===== Print ===== */
+  @media print {
+    html, body { height: auto; overflow: visible; }
+    body { background: #fff; }
+    .deck { display: block; width: auto; height: auto; }
+    .slide {
+      box-shadow: none; border-radius: 0;
+      overflow: hidden;
+    }
+    @page { size: 16in 9in landscape; margin: 0; }
+  }
+</style>
+</head>
+<body>
+<div class="deck">
+
+<!-- ====== Slide 1: Title ====== -->
+<section class="slide title-slide active" id="s1">
+  <div>
+    <h1>二维复杂分布的生成建模与评价</h1>
+    <div class="sub">基于 VAE 与扩散模型的比较研究</div>
+    <div class="meta">刘世阳 &nbsp; PB23050876<br>2026 年 6 月</div>
+  </div>
+</section>
+
+<!-- ====== Slide 2: Problem & Data ====== -->
+<section class="slide" id="s2">
+  <header>问题背景与研究动机</header>
+  <main>
+    <div class="g2 g2-55">
+      <div class="fit"><img src="../figures/analysis/comparison_overview.png" alt="四类分布"></div>
+      <div class="col" style="justify-content:center; gap:14px;">
+        <div class="key">四类二维分布覆盖生成建模的核心难题</div>
+        <div class="t">
+          <p><strong>问题：</strong>给定训练集 $\mathcal{D}^{\text{train}}_c=\{\mathbf{x}_i^{(c)}\}_{i=1}^{2000}\subset\mathbb{R}^2$，学习生成分布 $p_\theta(\mathbf{x})$ 使得生成样本在几何结构、密度和多样性上接近真实数据。</p>
+        </div>
+        <table>
+          <tr><th>分布</th><th>生成方式</th><th>建模难点</th></tr>
+          <tr><td>Gaussian Mixture</td><td>8个团簇 ($\sigma=0.16$)</td><td>离散多峰覆盖</td></tr>
+          <tr><td>Ring</td><td>圆环 ($r=2.2,\ \sigma_r=0.13$)</td><td>中心空洞、薄流形</td></tr>
+          <tr><td>Two Moons</td><td>对称弧形 ($\sigma=0.08$)</td><td>非凸分支、间隔保持</td></tr>
+          <tr><td>Spiral</td><td>双螺旋 ($r=0.22t$)</td><td>长程相位一致性</td></tr>
+        </table>
+        <div class="t t-sm">每类 2000 训练 + 2000 测试样本；使用 MMD、Wasserstein、Coverage、Precision 四项指标评价。</div>
+      </div>
+    </div>
+  </main>
+  <footer>2 / 10</footer>
+</section>
+
+<!-- ====== Slide 3: Geometry Analysis ====== -->
+<section class="slide" id="s3">
+  <header>数据几何分析：难度画像</header>
+  <main>
+    <div class="g2 g2-40">
+      <div class="fit"><img src="../figures/analysis/summary_radar.png" alt="难度雷达"></div>
+      <div class="col" style="justify-content:center; gap:10px;">
+        <div class="t">
+          <p><strong>五个几何维度</strong>（min-max 归一化，相对难度）：</p>
+          <ul>
+            <li><strong>局部噪声</strong> — 样本到邻近点的平均距离</li>
+            <li><strong>流形厚度</strong> — 局部 PCA 最小方差方向宽度</li>
+            <li><strong>局部曲率</strong> — 邻域协方差特征值比例</li>
+            <li><strong>PCA 非线性</strong> — 线性主成分的失效程度</li>
+            <li><strong>空间跨度</strong> — 平均两两距离</li>
+          </ul>
+        </div>
+        <div class="key blue">难度梯度：Gaussian &lt; Two Moons $\approx$ Ring &lt; Spiral</div>
+        <div class="t t-sm">
+          <p><strong>PCA 局限：</strong>Ring 和 Spiral 的 PC1/PC2 各占 ~50%，但本质是一维流形——线性投影无法发现非线性结构。有效维度估计进一步证实：Ring/Moons 在大尺度趋近 1 维，Spiral 全尺度均偏高。</p>
+          <p><strong>极坐标视角：</strong>Ring 塌缩为 $r\approx 2.2$ 的高斯带；Spiral 中 $r\propto\theta$。复杂分布可通过坐标变换映射到简单先验——这正是 Normalizing Flows 和扩散模型逆向过程的核心思想。</p>
+        </div>
+      </div>
+    </div>
+  </main>
+  <footer>3 / 10</footer>
+</section>
+
+<!-- ====== Slide 4: Two Models ====== -->
+<section class="slide" id="s4">
+  <header>两类模型：VAE vs. DDPM</header>
+  <main>
+    <div class="stack" style="gap:6px; width:100%;">
+      <div style="display:grid; grid-template-columns:1fr 1fr; grid-template-rows:auto auto auto; gap:6px 18px; align-content:center;">
+        <!-- Row 1: images -->
+        <div style="text-align:center;"><img src="../figures/vae.png" style="max-width:85%; max-height:100px;" alt="VAE"></div>
+        <div style="text-align:center;"><img src="../figures/ddpm.png" style="max-width:85%; max-height:100px;" alt="DDPM"></div>
+        <!-- Row 2: formulas -->
+        <div class="fm fm-sm">$\mathcal{L}_{\mathrm{VAE}}=\mathbb{E}\big[\|\mathbf{x}-\hat{\mathbf{x}}\|^2\big]+\beta\cdot D_{\mathrm{KL}}(q_\phi(\mathbf{z}|\mathbf{x})\|\mathcal{N}(0,I))$</div>
+        <div class="fm fm-sm">$\mathcal{L}_{\mathrm{DDPM}}=\mathbb{E}_{t,\mathbf{x}_0,\epsilon}\big[\|\epsilon-\epsilon_\theta(\mathbf{x}_t,t)\|^2\big],\ \mathbf{x}_t=\sqrt{\bar{\alpha}_t}\mathbf{x}_0+\sqrt{1-\bar{\alpha}_t}\epsilon$</div>
+        <!-- Row 3: text -->
+        <div class="t t-sm">
+          <p><strong>变分自编码器：</strong>假设数据由潜变量 $\mathbf{z}\in\mathbb{R}^8$ 生成，先验 $p(\mathbf{z})=\mathcal{N}(0,I)$。编码器输出后验参数 $(\mu,\sigma)$，通过重参数化 $\mathbf{z}=\mu+\sigma\odot\epsilon$ 使采样可微，解码器从 $\mathbf{z}$ 单步重建。ELBO 平衡重构精度与 KL 正则——$\beta$ 越大潜空间越规整，但几何表达能力越受限。采样极快但易在低密度区产生插值伪影。</p>
+        </div>
+        <div class="t t-sm">
+          <p><strong>去噪扩散概率模型：</strong>定义 $T=1000$ 步马尔可夫链。前向过程逐步注入高斯噪声直到 $\mathbf{x}_T\sim\mathcal{N}(0,I)$。反向过程训练网络 $\epsilon_\theta$ 预测每一步噪声，采样时从纯噪声迭代去噪。高 $t$ 恢复全局轮廓，低 $t$ 精修局部细节——这种"分而治之"策略在薄流形和非凸支撑上保持更好，但需完整走完 $T$ 步。</p>
+        </div>
+      </div>
+      <div class="key">核心差异：VAE 一次解码，DDPM 分步去噪 — 后续所有性能差异的根源</div>
+    </div>
+  </main>
+  <footer>4 / 9</footer>
+</section>
+
+<!-- ====== Slide 6: Main Results ====== -->
+<section class="slide" id="s6">
+  <header>主实验结果与评价指标</header>
+  <main>
+    <div class="g2 g2-55">
+      <div class="fit"><img src="../figures/generation/main_generation_grid.png" alt="生成对比"></div>
+      <div class="col" style="justify-content:center; gap:5px;">
+        <div class="def" style="padding:5px 10px;"><strong>MMD</strong> — 再生核 Hilbert 空间中两组样本均值嵌入的距离，反映整体分布匹配程度。</div>
+        <div class="def orange" style="padding:5px 10px;"><strong>Wasserstein</strong> — 最优传输意义下的分布距离，对支撑集几何形状的系统性偏移高度敏感。</div>
+        <div class="def" style="padding:5px 10px;"><strong>Coverage</strong> — 真实样本被生成样本 $k$-NN 覆盖的比例，衡量多样性——"有多全"。</div>
+        <div class="def orange" style="padding:5px 10px;"><strong>Precision</strong> — 生成样本落在真实流形内的比例，衡量保真度——"有多真"。</div>
+        <table>
+          <tr><th>分布</th><th>模型</th><th>MMD↓</th><th>Wass.↓</th><th>Cov.↑</th><th>Prec.↑</th><th>综合↑</th></tr>
+          <tr><td rowspan="2">Gaussian</td><td>VAE</td><td class="hl">0.0033</td><td class="hl">0.132</td><td>0.552</td><td>0.475</td><td>0.387</td></tr>
+          <tr><td>DDPM</td><td>0.0040</td><td>0.151</td><td class="hl">0.963</td><td class="hl">0.966</td><td class="hl">0.666</td></tr>
+          <tr><td rowspan="2">Ring</td><td>VAE</td><td>0.0047</td><td>0.116</td><td>0.664</td><td>0.806</td><td>0.619</td></tr>
+          <tr><td>DDPM</td><td class="hl">0.0002</td><td class="hl">0.095</td><td class="hl">0.972</td><td class="hl">0.992</td><td class="hl">0.969</td></tr>
+          <tr><td rowspan="2">Moons</td><td>VAE</td><td>0.0141</td><td>0.111</td><td>0.176</td><td>0.536</td><td>0.186</td></tr>
+          <tr><td>DDPM</td><td class="hl">0.0010</td><td class="hl">0.087</td><td class="hl">0.968</td><td class="hl">0.966</td><td class="hl">0.972</td></tr>
+          <tr><td rowspan="2">Spiral</td><td>VAE</td><td>0.0098</td><td>0.115</td><td>0.777</td><td class="hl">0.976</td><td>0.649</td></tr>
+          <tr><td>DDPM</td><td class="hl">0.0043</td><td class="hl">0.104</td><td class="hl">0.847</td><td class="hl">0.976</td><td class="hl">0.813</td></tr>
+        </table>
+      </div>
+    </div>
+  </main>
+  <footer>5 / 9</footer>
+</section>
+
+<!-- ====== Slide 7: VAE Diagnosis ====== -->
+<section class="slide" id="s7">
+  <header>VAE 失效机制：KL 压缩导致潜空间低利用与解码插值</header>
+  <main>
+    <div class="col" style="gap:8px; min-height:0;">
+      <div class="g2" style="gap:18px; flex:0 0 auto;">
+        <div class="col" style="justify-content:center; gap:8px;">
+          <div class="key blue">核心矛盾：几何表达能力 vs. 先验可采样性</div>
+          <div class="t">
+            <p><strong>诊断 1 — 部分潜变量塌缩：</strong>默认 $\beta=1.0$ 时 KL 正则过强，信息被压缩到仅 $1\!\sim\!2$ 个潜变量维度（逐维 $\mathrm{KL}_j=\frac{1}{2}(\mu_j^2+\sigma_j^2-\log\sigma_j^2-1)$ 集中在少数维度，其余趋近于零），本质是<strong>潜空间低利用</strong>。</p>
+            <p><strong>诊断 2 — 连续解码插值：</strong>低利用的潜空间意味着大量区域从未被编码器访问。从 $\mathcal{N}(0,I)$ 采样时落入这些低密度区，连续解码器在此<strong>插值</strong>，产生团簇桥接、环带增厚、弧间混合。</p>
+          </div>
+        </div>
+        <div class="col" style="justify-content:center; gap:8px;">
+          <div class="fm fm-sm">$\mathcal{L}_{\mathrm{VAE}}=\underbrace{\|\mathbf{x}-\hat{\mathbf{x}}\|^2}_{\text{重构误差}}\ +\ \boxed{\beta}\cdot\underbrace{\frac{1}{2}\sum_{j=1}^{d}\big(\mu_j^2+\sigma_j^2-\log\sigma_j^2-1\big)}_{\text{KL 正则：迫使 }q_\phi(\mathbf{z}|\mathbf{x})\to\mathcal{N}(0,I)}$</div>
+          <div class="t">
+            <p><strong>$\beta$ 是什么？</strong>KL 正则项的权重。$\beta$ 越大 → 潜空间越接近 $\mathcal{N}(0,I)$，规整但表达受限；$\beta$ 越小 → 重构越精确，但编码分布偏离先验，从先验采样时容易落入未训练区域。$\beta$ 本质上控制着<strong>重构精度与先验可采样性的权衡</strong>。</p>
+          </div>
+        </div>
+      </div>
+      <div class="fit" style="flex:1; min-height:0;"><img src="../figures/extensions/vae_beta_sweep_samples.png" alt="beta sweep"></div>
+    </div>
+  </main>
+  <footer>6 / 9</footer>
+</section>
+
+<!-- ====== Slide 8: DDPM Diagnosis ====== -->
+<section class="slide" id="s8">
+  <header>DDPM 诊断：局部去噪 vs. 全局拓扑</header>
+  <main>
+    <div class="col" style="gap:8px; min-height:0;">
+      <div class="fit" style="flex:1; min-height:0;"><img src="../figures/extensions/diffusion_spiral_samples.png" alt="Spiral变体"></div>
+      <div class="g2" style="gap:20px; flex:0 0 auto;">
+        <div class="t t-sm">
+          <p><strong>DDPM 为什么整体更稳？</strong></p>
+          <ul>
+            <li>逐步去噪将生成拆成 $T$ 个噪声水平的子任务——"分而治之"</li>
+            <li>高噪声步骤恢复全局轮廓，低噪声步骤精修局部细节</li>
+            <li>避免了 VAE 单步潜空间解码导致的低密度插值</li>
+          </ul>
+        </div>
+        <div class="t t-sm">
+          <p><strong>Spiral 为什么仍然失败？</strong></p>
+          <ul>
+            <li>减少步数、cosine 调度、加入极坐标 $(r,\theta)$ → <em>均不能恢复双臂</em>（见上图）</li>
+            <li>普通 DDPM 学的是<em>局部 score 场</em> $\nabla_{\mathbf{x}}\log p(\mathbf{x})$，缺少全局结构约束</li>
+            <li>Spiral 需同时满足：螺旋臂编号 + 相位顺序 + $r \propto \theta$</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </main>
+  <footer>7 / 9</footer>
+</section>
+
+<!-- ====== Slide 9: Structure Enhancement ====== -->
+<section class="slide" id="s9">
+  <header>结构增强：显式表达 Spiral 的结构变量</header>
+  <main>
+    <div class="col" style="gap:8px; min-height:0;">
+      <div class="fit" style="flex:1; min-height:0;"><img src="../figures/extensions/spiral_structure_samples.png" alt="结构增强"></div>
+      <div class="g2" style="gap:16px; flex:0 0 auto;">
+        <div class="col" style="justify-content:center; gap:6px;">
+          <div class="fm fm-sm">$\mathbf{c}_a(t)=\alpha t\begin{bmatrix}\cos(t+a\pi)\\ \sin(t+a\pi)\end{bmatrix},\ a\in\{0,1\}$</div>
+          <div class="t t-sm">
+            <p>将二维坐标<strong>分解为三个结构变量</strong>：$\text{sample} = \text{arm label} + \text{phase } t + \text{local residual}$</p>
+            <ul>
+              <li>拟合螺旋中心线 $\mathbf{c}_a(t)$，每个样本投影到最近臂和相位</li>
+              <li><strong>Spiral-coord DDPM：</strong>在归一化相位-残差坐标中训练 DDPM</li>
+              <li><strong>Structural prior：</strong>直接拟合臂/相位/残差的经验分布（诊断性上界）</li>
+            </ul>
+          </div>
+        </div>
+        <div class="col" style="justify-content:center; gap:6px;">
+          <div class="key blue">Spiral-coord DDPM 在所有指标上均为最优</div>
+          <div class="t t-sm">
+            <p><strong>为什么需要曲线外比例？</strong></p>
+            <p>MMD、Coverage 等通用指标衡量的是整体分布匹配，<em>无法区分"样本贴近螺旋臂"还是"填充在臂间空白处"</em>。生成样本若落在螺旋点云包络内但偏离中心线，Wasserstein 距离可能仍然不高，但双臂结构已经丢失。</p>
+            <p><strong>定义：</strong>记 $\tau$ 为真实样本到中心线距离的 95% 分位数，则 $\mathrm{CurveOff}=\frac{1}{|Y|}\sum_{\mathbf{y}\in Y}\mathbf{1}\{d_\mathcal{C}(\mathbf{y})>\tau\}$。</p>
+            <p>曲线外比例从 0.487 降至 <strong>0.048</strong>，Coverage 从 0.839 升至 <strong>0.949</strong>。瓶颈是<strong>结构表达</strong>，不是网络容量。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+  <footer>8 / 9</footer>
+</section>
+
+<!-- ====== Slide 10: Conclusions ====== -->
+<section class="slide" id="s10">
+  <header>结论与展望</header>
+  <main>
+    <div class="g2 g2-60">
+      <div class="concl" style="justify-content:center;">
+        <div class="it"><strong>1.</strong> 四类二维分布形成清晰难度梯度：Gaussian &lt; Moons $\approx$ Ring &lt; Spiral。二维可视化 + 局部几何统计有效揭示建模难点。</div>
+        <div class="it"><strong>2.</strong> 默认配置下 DDPM 整体更稳——逐步去噪避免潜空间插值，支撑集保持更好。</div>
+        <div class="it"><strong>3.</strong> VAE 的失败是 KL 压缩导致潜空间低利用和连续解码插值，而非完全后验崩塌。$\beta$ 控制几何表达与先验可采样性的权衡。</div>
+        <div class="it"><strong>4.</strong> Spiral-coord DDPM 将曲线外比例从 0.487 降至 0.048：复杂拓扑需要显式结构变量（臂编号 + 相位 + 残差），而非仅靠更强网络。</div>
+      </div>
+      <div class="fit"><img src="../figures/generation/optimized_generation_grid.png" alt="最终效果"></div>
+    </div>
+  </main>
+  <footer>9 / 9</footer>
+</section>
+
+</div>
+
+<script>
+  const slides = Array.from(document.querySelectorAll('.slide'));
+  let current = 0;
+  function idxFromHash() {
+    const m = window.location.hash.match(/^#s(\d+)$/);
+    return m ? Math.max(0, Math.min(slides.length-1, +m[1]-1)) : 0;
+  }
+  function go(i, setHash=true) {
+    current = Math.max(0, Math.min(slides.length-1, i));
+    slides.forEach((s,j) => s.classList.toggle('active', j===current));
+    if (setHash) history.replaceState(null,'',`#s${current+1}`);
+  }
+  document.addEventListener('keydown', e => {
+    if (e.key==='ArrowRight'||e.key==='PageDown'||e.key===' ') { e.preventDefault(); go(current+1); }
+    if (e.key==='ArrowLeft'||e.key==='PageUp') { e.preventDefault(); go(current-1); }
+    if (e.key==='Home') go(0);
+    if (e.key==='End') go(slides.length-1);
+  });
+  window.addEventListener('hashchange', () => go(idxFromHash(), false));
+  go(idxFromHash(), false);
+</script>
+</body>
+</html>
